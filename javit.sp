@@ -4,6 +4,9 @@
 #include <cstrike>
 #include <emitsoundany>
 #include <smlib/clients>
+#include <smlib/weapons>
+
+#undef REQUIRE_PLUGIN
 #include <jbaddons>
 
 #pragma newdecls required
@@ -49,6 +52,8 @@ bool gLR_DeaglePositionMeasured[2];
 bool gLR_DroppedDeagle[MAXPLAYERS+1];
 bool gLR_OnGround[MAXPLAYERS+1];
 float gLR_CirclePosition[3];
+int gLR_Weapon[MAXPLAYERS+1];
+int gLR_TemporaryPartner[MAXPLAYERS+1];
 
 bool gB_RebelRound = false;
 bool gB_Freeday[MAXPLAYERS+1];
@@ -57,6 +62,9 @@ int gI_BeamSprite = -1;
 int gI_HaloSprite = -1;
 int gI_ExplosionSprite = -1;
 int gI_SmokeSprite = -1;
+
+int gI_Clip1 = -1;
+int gI_Ammo = -1;
 
 ConVar gCV_IgnoreGrenadeRadio = null;
 
@@ -151,6 +159,9 @@ public void OnPluginStart()
     gH_Forwards_OnLRAvailable = CreateGlobalForward("Javit_OnLRAvailable", ET_Event);
     gH_Forwards_OnLRStart = CreateGlobalForward("Javit_OnLRStart", ET_Event, Param_Cell, Param_Cell, Param_Cell);
     gH_Forwards_OnLRFinish = CreateGlobalForward("Javit_OnLRFinish", ET_Event, Param_Cell, Param_Cell, Param_Cell);
+
+    gI_Clip1 = FindSendPropInfo("CBaseCombatWeapon", "m_iClip1");
+    gI_Ammo = FindSendPropInfo("CCSPlayer", "m_iAmmo");
 }
 
 public void OnClientPutInServer(int client)
@@ -467,9 +478,23 @@ public Action OnTakeDamage(int victim, int &attacker, int &inflictor, float &dam
                 return Plugin_Handled;
             }
 
+            case LR_Molotovs:
+            {
+                if(victim == attacker)
+                {
+                    return Plugin_Handled;
+                }
+
+                damage *= 1.5;
+
+                return Plugin_Changed;
+            }
+
             case LR_CircleOfDoom:
             {
                 SlapPlayer(victim, 0, true);
+
+                return Plugin_Handled;
             }
         }
     }
@@ -483,6 +508,8 @@ public void OnMapStart()
     {
         gI_BeamSprite = PrecacheModel("sprites/laser.vmt", true);
         gI_HaloSprite = PrecacheModel("sprites/halo01.vmt", true);
+        gI_ExplosionSprite = PrecacheModel("sprites/blueglow2.vmt", true);
+        gI_SmokeSprite = PrecacheModel("sprites/steam1.vmt", true);
 
         strcopy(gSLR_MonitorModel, PLATFORM_MAX_PATH, "models/props_lab/monitor01a.mdl");
     }
@@ -491,8 +518,10 @@ public void OnMapStart()
     {
         gI_BeamSprite = PrecacheModel("sprites/laserbeam.vmt", true);
         gI_HaloSprite = PrecacheModel("sprites/glow01.vmt", true);
+        gI_ExplosionSprite = PrecacheModel("sprites/blueglow1.vmt", true);
+        gI_SmokeSprite = PrecacheModel("sprites/steam1.vmt", true);
 
-        strcopy(gSLR_MonitorModel, PLATFORM_MAX_PATH, "models/props_lab/monitor02a.mdl");
+        strcopy(gSLR_MonitorModel, PLATFORM_MAX_PATH, "models/props_lab/monitor02.mdl");
     }
 
     PrecacheModel(gSLR_MonitorModel);
@@ -513,9 +542,6 @@ public void OnMapStart()
 
     AddFileToDownloadsTable("sound/javit/lr_hax.mp3");
     PrecacheSoundAny("javit/lr_hax.mp3", true);
-
-    gI_ExplosionSprite = PrecacheModel("materials/sprites/blueglow2.vmt");
-    gI_SmokeSprite = PrecacheModel("materials/sprites/steam1.vmt");
 
     CreateTimer(0.50, Timer_Beacon, INVALID_HANDLE, TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
 }
@@ -556,10 +582,24 @@ public void Player_Spawn(Event e, const char[] name, bool dB)
         return;
     }
 
+    gLR_Weapon[client] = -1;
+
+    CreateTimer(0.10, Timer_Equip, GetClientSerial(client));
+}
+
+public Action Timer_Equip(Handle Timer, any data)
+{
+    int client = GetClientFromSerial(data);
+
+    if(client == 0)
+    {
+        return Plugin_Stop;
+    }
+
+    DisarmPlayer(client);
+
     SetEntityHealth(client, 100);
     SetEntityGravity(client, 1.0);
-
-    Client_RemoveAllWeapons(client);
 
     GivePlayerItem(client, "weapon_knife");
 
@@ -570,6 +610,10 @@ public void Player_Spawn(Event e, const char[] name, bool dB)
 
         SetEntProp(client, Prop_Send, "m_ArmorValue", 100);
     }
+
+    SetEntProp(client, Prop_Data, "m_CollisionGroup", 2);
+
+    return Plugin_Stop;
 }
 
 public void Player_Death(Event e, const char[] name, bool dB)
@@ -706,7 +750,7 @@ public void Weapon_Fire(Event e, const char[] name, bool dB)
             {
                 if(iClip > 0)
                 {
-                    SetEntProp(iWeapon, Prop_Data, "m_iClip1", iClip);
+                    SetWeaponAmmo(client, iWeapon, iClip, 0);
                 }
             }
 
@@ -734,7 +778,7 @@ public void Weapon_Fire(Event e, const char[] name, bool dB)
         {
             int iPartner = GetLRPartner(client);
 
-            if(StrEqual(sWeapon, "knife") && ShootFlame(client, iPartner, 280.00))
+            if((StrEqual(sWeapon, "knife") || StrEqual(sWeapon, "weapon_knife")) && ShootFlame(client, iPartner, 280.00))
             {
                 IgniteEntity(iPartner, 1.00, false);
             }
@@ -742,7 +786,7 @@ public void Weapon_Fire(Event e, const char[] name, bool dB)
 
         case LR_DRHax:
         {
-            if(StrEqual(sWeapon, "knife"))
+            if(StrEqual(sWeapon, "weapon_knife"))
             {
                 ShootMonitor(client);
             }
@@ -750,7 +794,7 @@ public void Weapon_Fire(Event e, const char[] name, bool dB)
 
         case LR_ShotgunFight:
         {
-            if(StrEqual(sWeapon, "xm1014"))
+            if(StrEqual(sWeapon, "xm1014") || StrEqual(sWeapon, "weapon_xm1014"))
             {
                 int color[4] = {0, 0, 0, 255};
 
@@ -982,9 +1026,18 @@ public int MenuHandler_LastRequestType(Menu m, MenuAction a, int p1, int p2)
                 SetEntityHealth(p1, 140 + (90 * Javit_GetClientAmount(CS_TEAM_CT, true)));
 
                 Client_RemoveAllWeapons(p1);
-                GivePlayerItem(p1, "weapon_knife");
-                Client_GiveWeaponAndAmmo(p1, "weapon_deagle", false, 9999);
-                Client_GiveWeaponAndAmmo(p1, gG_GameEngine == Game_CSGO? "weapon_negev":"weapon_m249", true, 9999);
+
+                int iKnife = GivePlayerItem(p1, "weapon_knife");
+                EquipPlayerWeapon(p1, iKnife);
+
+                int iDeagle = GivePlayerItem(p1, "weapon_deagle");
+                SetWeaponAmmo(p1, iDeagle, 9999, 0);
+                EquipPlayerWeapon(p1, iDeagle);
+
+                int iMAG = GivePlayerItem(p1, gG_GameEngine == Game_CSGO? "weapon_negev":"weapon_m249");
+                SetWeaponAmmo(p1, iMAG, 9999, 0);
+                EquipPlayerWeapon(p1, iMAG);
+                SetEntPropEnt(p1, Prop_Data, "m_hActiveWeapon", iMAG);
 
                 Javit_PlayMissSound();
 
@@ -1031,7 +1084,7 @@ public int MenuHandler_LastRequestCT(Menu m, MenuAction a, int p1, int p2)
         char[] sInfo = new char[8];
         m.GetItem(p2, sInfo, 8);
 
-        int iPartner = StringToInt(sInfo);
+        int iPartner = gLR_TemporaryPartner[p1] = StringToInt(sInfo);
 
         if(!IsValidClient(iPartner, true) || GetClientTeam(iPartner) != CS_TEAM_CT)
         {
@@ -1061,8 +1114,11 @@ public int MenuHandler_LastRequestCT(Menu m, MenuAction a, int p1, int p2)
                 float fAdd[3];
                 GetAngleVectors(fEyeAngles, fAdd, NULL_VECTOR, NULL_VECTOR);
 
-                fClientOrigin[0] += fAdd[0] * 125.0;
-                fClientOrigin[1] += fAdd[1] * 125.0;
+                if(gLR_Current == LR_RussianRoulette)
+                {
+                    fClientOrigin[0] += fAdd[0] * 125.0;
+                    fClientOrigin[1] += fAdd[1] * 125.0;
+                }
 
                 fEyeAngles[1] += 180.0;
 
@@ -1074,7 +1130,10 @@ public int MenuHandler_LastRequestCT(Menu m, MenuAction a, int p1, int p2)
                 float fPartnerOrigin[3];
                 GetClientAbsOrigin(iPartner, fPartnerOrigin);
 
-                TeleportEntity(iPartner, fClientOrigin, fEyeAngles, NULL_VECTOR);
+                float fZeroSpeed[3] = {0.0, 0.0, 0.001};
+                fClientOrigin[2] += 12.0;
+
+                TeleportEntity(iPartner, fClientOrigin, fEyeAngles, fZeroSpeed);
 
                 if(GetClientAimTarget(p1, false) != iPartner || !IsSafeTeleport(p1, 250.0))
                 {
@@ -1091,6 +1150,72 @@ public int MenuHandler_LastRequestCT(Menu m, MenuAction a, int p1, int p2)
                 Javit_InitializeLR(p1, iPartner, gLR_ChosenRequest[p1], false);
             }
 
+            case LR_Shot4Shot, LR_NoScopeBattle:
+            {
+                Menu menu = new Menu(MenuHandler_Weapons);
+
+                char[] sTitle = new char[64];
+                FormatEx(sTitle, 64, "[%s] Choose a weapon:", gS_LRNames[gLR_ChosenRequest[p1]]);
+
+                menu.SetTitle(sTitle);
+
+                menu.AddItem("-2", "Random");
+
+                if(gLR_ChosenRequest[p1] == LR_Shot4Shot)
+                {
+                    if(gG_GameEngine == Game_CSS)
+                    {
+                        for(int i = 0; i < sizeof(gS_CSSPistols); i++)
+                        {
+                            char[] sMenuInfo = new char[8];
+                            IntToString(i, sMenuInfo, 8);
+
+                            menu.AddItem(sMenuInfo, gS_CSSPistolNames[i]);
+                        }
+                    }
+
+                    else
+                    {
+                        for(int i = 0; i < sizeof(gS_CSGOPistols); i++)
+                        {
+                            char[] sMenuInfo = new char[8];
+                            IntToString(i, sMenuInfo, 8);
+
+                            menu.AddItem(sMenuInfo, gS_CSGOPistolNames[i]);
+                        }
+                    }
+                }
+
+                else
+                {
+                    if(gG_GameEngine == Game_CSS)
+                    {
+                        for(int i = 0; i < sizeof(gS_CSSSnipers); i++)
+                        {
+                            char[] sMenuInfo = new char[8];
+                            IntToString(i, sMenuInfo, 8);
+
+                            menu.AddItem(sMenuInfo, gS_CSSSniperNames[i]);
+                        }
+                    }
+
+                    else
+                    {
+                        for(int i = 0; i < sizeof(gS_CSGOSnipers); i++)
+                        {
+                            char[] sMenuInfo = new char[8];
+                            IntToString(i, sMenuInfo, 8);
+
+                            menu.AddItem(sMenuInfo, gS_CSGOSniperNames[i]);
+                        }
+                    }
+                }
+
+                menu.ExitBackButton = true;
+
+                menu.Display(p1, 20);
+            }
+
             default:
             {
                 Javit_InitializeLR(p1, iPartner, gLR_ChosenRequest[p1], false);
@@ -1100,10 +1225,32 @@ public int MenuHandler_LastRequestCT(Menu m, MenuAction a, int p1, int p2)
 
     else if(a == MenuAction_Cancel && p2 == MenuCancel_ExitBack)
     {
-        if(p2 == MenuCancel_ExitBack)
-        {
-            Javit_ShowLRMenu(p1);
-        }
+        Javit_ShowLRMenu(p1);
+    }
+
+    else if(a == MenuAction_End)
+    {
+        delete m;
+    }
+
+    return 0;
+}
+
+public int MenuHandler_Weapons(Menu m, MenuAction a, int p1, int p2)
+{
+    if(a == MenuAction_Select)
+    {
+        char[] sInfo = new char[8];
+        m.GetItem(p2, sInfo, 8);
+
+        gLR_Weapon[p1] = StringToInt(sInfo);
+
+        Javit_InitializeLR(p1, gLR_TemporaryPartner[p1], gLR_ChosenRequest[p1], gLR_Weapon[p1] == -2? true:false);
+    }
+
+    else if(a == MenuAction_Cancel && p2 == MenuCancel_ExitBack)
+    {
+        Javit_ShowLRMenu(p1);
     }
 
     else if(a == MenuAction_End)
@@ -1346,11 +1493,19 @@ public void Javit_StopLR(const char[] message, any ...)
         {
             SetEntityHealth(gLR_Players[i], 100);
 
-            Client_RemoveAllWeapons(gLR_Players[i]);
+            DisarmPlayer(gLR_Players[i]);
 
-            Weapon_CreateForOwner(gLR_Players[i], "weapon_knife");
-            Weapon_CreateForOwner(gLR_Players[i], gSLR_SecondaryWeapons[i]);
-            Weapon_CreateForOwner(gLR_Players[i], gSLR_PrimaryWeapons[i]);
+            GivePlayerItem(gLR_Players[i], "weapon_knife");
+
+            if(strlen(gSLR_SecondaryWeapons[i]) > 0)
+            {
+                GivePlayerItem(gLR_Players[i], gSLR_SecondaryWeapons[i]);
+            }
+
+            if(strlen(gSLR_PrimaryWeapons[i]) > 0)
+            {
+                GivePlayerItem(gLR_Players[i], gSLR_PrimaryWeapons[i]);
+            }
 
             SetEntityHealth(gLR_Players[i], gILR_HealthValues[i]);
             SetEntProp(gLR_Players[i], Prop_Send, "m_ArmorValue", gILR_ArmorValues[i]);
@@ -1362,15 +1517,15 @@ public void Javit_StopLR(const char[] message, any ...)
 
             ExtinguishEntity(gLR_Players[i]);
 
+            SetEntProp(gLR_Players[i], Prop_Data, "m_CollisionGroup", 2);
+
             gLR_SpecialCooldown[gLR_Players[i]] = 0.0;
             gLR_DroppedDeagle[gLR_Players[i]] = false;
         }
 
         gLR_DeaglePositionMeasured[i] = false;
+        gLR_Players[i] = 0;
     }
-
-    gLR_Players[LR_Prisoner] = 0;
-    gLR_Players[LR_Guard] = 0;
 
     if(gLR_DeagleTossTimer != null)
     {
@@ -1520,6 +1675,8 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
 
                 GivePlayerItem(gLR_Players[i], "weapon_knife");
                 GivePlayerItem(gLR_Players[i], "weapon_flashbang");
+
+                SetEntProp(gLR_Players[i], Prop_Data, "m_CollisionGroup", 5);
             }
         }
 
@@ -1530,7 +1687,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
 
             if(gG_GameEngine == Game_CSS)
             {
-                int iWeapon = GetRandomInt(0, sizeof(gS_CSSPistols) - 1);
+                int iWeapon = gLR_Weapon[prisoner] == -2? GetRandomInt(0, sizeof(gS_CSSPistols) - 1):gLR_Weapon[prisoner];
 
                 strcopy(sPistol, 128, gS_CSSPistols[iWeapon]);
                 strcopy(sPistolName, 128, gS_CSSPistolNames[iWeapon]);
@@ -1538,7 +1695,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
 
             else if(gG_GameEngine == Game_CSGO)
             {
-                int iWeapon = GetRandomInt(0, sizeof(gS_CSGOPistols) - 1);
+                int iWeapon = gLR_Weapon[prisoner] == -2? GetRandomInt(0, sizeof(gS_CSGOPistols) - 1):gLR_Weapon[prisoner];
 
                 strcopy(sPistol, 128, gS_CSGOPistols[iWeapon]);
                 strcopy(sPistolName, 128, gS_CSGOPistolNames[iWeapon]);
@@ -1568,7 +1725,9 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 Client_RemoveAllWeapons(gLR_Players[i]);
                 SetEntityHealth(gLR_Players[i], 100);
 
-                Client_GiveWeaponAndAmmo(gLR_Players[i], sPistol, true, 0, -1, i == iFirst? (gLR_S4SMode == 1? 7:1):0, -1);
+                int iWeapon = GivePlayerItem(gLR_Players[i], sPistol);
+                SetWeaponAmmo(gLR_Players[i], iWeapon, i == iFirst? (gLR_S4SMode == 1? 7:1):0, 0);
+                EquipPlayerWeapon(gLR_Players[i], iWeapon);
             }
         }
 
@@ -1613,8 +1772,12 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 SetEntityGravity(gLR_Players[i], fGravity);
 
                 Client_RemoveAllWeapons(gLR_Players[i]);
-                Client_GiveWeaponAndAmmo(gLR_Players[i], sPistol, false, 9999, -1, 9999, -1);
-                Client_GiveWeaponAndAmmo(gLR_Players[i], sPrimary, true, 9999, -1, 9999, -1);
+
+                int iPistol = GivePlayerItem(gLR_Players[i], sPistol);
+                SetWeaponAmmo(gLR_Players[i], iPistol, 9999, 9999);
+
+                int iPrimary = GivePlayerItem(gLR_Players[i], sPrimary);
+                SetWeaponAmmo(gLR_Players[i], iPrimary, 9999, 9999);
             }
 
             Javit_PrintToChatAll("\x04??? \x05%s", sPistolName);
@@ -1631,7 +1794,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
 
             if(gG_GameEngine == Game_CSS)
             {
-                int iWeapon = GetRandomInt(0, sizeof(gS_CSSSnipers) - 1);
+                int iWeapon = gLR_Weapon[prisoner] == -2? GetRandomInt(0, sizeof(gS_CSSSnipers) - 1):gLR_Weapon[prisoner];
 
                 strcopy(sSniper, 128, gS_CSSSnipers[iWeapon]);
                 strcopy(sSniperName, 128, gS_CSSSniperNames[iWeapon]);
@@ -1639,7 +1802,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
 
             else if(gG_GameEngine == Game_CSGO)
             {
-                int iWeapon = GetRandomInt(0, sizeof(gS_CSGOSnipers) - 1);
+                int iWeapon = gLR_Weapon[prisoner] == -2? GetRandomInt(0, sizeof(gS_CSGOSnipers) - 1):gLR_Weapon[prisoner];
 
                 strcopy(sSniper, 128, gS_CSGOSnipers[iWeapon]);
                 strcopy(sSniperName, 128, gS_CSGOSniperNames[iWeapon]);
@@ -1653,12 +1816,14 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 SetEntityHealth(gLR_Players[i], 100);
                 SetEntProp(gLR_Players[i], Prop_Send, "m_ArmorValue", 100);
 
-                GivePlayerItem(gLR_Players[i], "weapon_knife");
+                int iKnife = GivePlayerItem(gLR_Players[i], "weapon_knife");
+                EquipPlayerWeapon(gLR_Players[i], iKnife);
 
                 DataPack dp = new DataPack();
                 dp.WriteCell(GetClientSerial(gLR_Players[i]));
 
-                int iSniper = Client_GiveWeaponAndAmmo(gLR_Players[i], sSniper, false, 9990, -1, 10, -1);
+                int iSniper = GivePlayerItem(gLR_Players[i], sSniper);
+                SetWeaponAmmo(gLR_Players[i], iSniper, 10, 9999);
                 dp.WriteCell(iSniper);
 
                 CreateTimer(0.50, Timer_SwitchToWeapon, dp, TIMER_FLAG_NO_MAPCHANGE);
@@ -1704,7 +1869,9 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 DataPack dp = new DataPack();
                 dp.WriteCell(GetClientSerial(gLR_Players[i]));
 
-                int iWeapon = Client_GiveWeaponAndAmmo(gLR_Players[i], "weapon_p90", false, 0, -1, 9999, -1);
+                int iWeapon = GivePlayerItem(gLR_Players[i], "weapon_p90");
+                SetWeaponAmmo(gLR_Players[i], iWeapon, 9999, 0);
+
                 dp.WriteCell(iWeapon);
 
                 CreateTimer(0.50, Timer_SwitchToWeapon, dp, TIMER_FLAG_NO_MAPCHANGE);
@@ -1723,7 +1890,9 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 DataPack dp = new DataPack();
                 dp.WriteCell(GetClientSerial(gLR_Players[i]));
 
-                int iWeapon = Client_GiveWeaponAndAmmo(gLR_Players[i], "weapon_deagle", false, 0, -1, 9999, -1);
+                int iWeapon = GivePlayerItem(gLR_Players[i], "weapon_deagle");
+                SetWeaponAmmo(gLR_Players[i], iWeapon, 9999, 0);
+
                 dp.WriteCell(iWeapon);
 
                 CreateTimer(0.50, Timer_SwitchToWeapon, dp, TIMER_FLAG_NO_MAPCHANGE);
@@ -1752,9 +1921,13 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 SetEntityHealth(gLR_Players[i], 100);
 
                 Client_RemoveAllWeapons(gLR_Players[i]);
+
                 GivePlayerItem(gLR_Players[i], "weapon_knife");
-                Client_GiveWeaponAndAmmo(gLR_Players[i], sPistol, false, 9999, -1, 9999, -1);
-                Client_GiveWeaponAndAmmo(gLR_Players[i], sRifle, true, 9999, -1, 9999, -1);
+                int iPistol = GivePlayerItem(gLR_Players[i], sPistol);
+                SetWeaponAmmo(gLR_Players[i], iPistol, 9999, 9999);
+
+                int iRifle = GivePlayerItem(gLR_Players[i], sRifle);
+                SetWeaponAmmo(gLR_Players[i], iRifle, 9999, 9999);
             }
         }
 
@@ -1771,7 +1944,9 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 Client_RemoveAllWeapons(gLR_Players[i]);
                 SetEntityHealth(gLR_Players[i], 100);
 
-                Client_GiveWeaponAndAmmo(gLR_Players[i], "weapon_deagle", true, 0, -1, i == iFirst? 1:0, -1);
+                int iDeagle = GivePlayerItem(gLR_Players[i], "weapon_deagle");
+                SetWeaponAmmo(gLR_Players[i], iDeagle, i == iFirst? 1:0, 0);
+                EquipPlayerWeapon(gLR_Players[i], iDeagle);
 
                 SetEntityFlags(gLR_Players[i], GetEntityFlags(gLR_Players[i]) | FL_ATCONTROLS);
             }
@@ -1831,7 +2006,9 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 Client_RemoveAllWeapons(gLR_Players[i]);
                 SetEntityHealth(gLR_Players[i], 100);
 
-                gLR_Deagles[i] = Client_GiveWeaponAndAmmo(gLR_Players[i], "weapon_deagle", true, 0, -1, 0, -1);
+                gLR_Deagles[i] = GivePlayerItem(gLR_Players[i], "weapon_deagle");
+                SetWeaponAmmo(gLR_Players[i], gLR_Deagles[i], 0, 0);
+                EquipPlayerWeapon(gLR_Players[i], gLR_Deagles[i]);
 
                 GetClientAbsOrigin(gLR_Players[i], gLR_DeaglePosition[i]);
 
@@ -1844,7 +2021,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
 
         case LR_ShotgunFight:
         {
-            Javit_PrintToChatAll("pew pew pew");
+            Javit_PrintToChatAll("pew pew pew.");
 
             int iHP = GetRandomInt(250, 300);
 
@@ -1854,7 +2031,10 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 SetEntityHealth(gLR_Players[i], iHP);
 
                 GivePlayerItem(gLR_Players[i], "weapon_knife");
-                Client_GiveWeaponAndAmmo(gLR_Players[i], "weapon_xm1014", true, 9999);
+
+                int iXM1014 = GivePlayerItem(gLR_Players[i], "weapon_xm1014");
+                SetWeaponAmmo(gLR_Players[i], iXM1014, 9999, 0);
+                EquipPlayerWeapon(gLR_Players[i], iXM1014);
             }
         }
 
@@ -1958,7 +2138,7 @@ public Action Timer_DeagleToss(Handle Timer)
                     color[2] = 255;
                 }
 
-                TE_SetupBeamPoints(gLR_DeaglePosition[i], gLR_PreJumpPosition[gLR_Players[i]], gI_BeamSprite, gI_HaloSprite, 0, 0, 15.0, 5.0, 5.0, 0, 0.0, color, 0);
+                TE_SetupBeamPoints(gLR_DeaglePosition[i], gLR_PreJumpPosition[gLR_Players[i]], gI_BeamSprite, gI_HaloSprite, 0, 0, 7.50, 5.0, 5.0, 0, 0.0, color, 0);
                 TE_SendToAll(0.0);
             }
         }
@@ -2000,7 +2180,8 @@ public Action Timer_KillTheLoser(Handle Timer, any data)
         fDistances[i] = GetVectorDistance(gLR_DeaglePosition[i], gLR_PreJumpPosition[gLR_Players[i]]);
     }
 
-    Javit_PrintToChatAll("RESULTS:\n\x04Prisoner: [\x03%N\x04] - \x05%.02f\n\x04Guard: [\x03%N\x04] - \x05%.02f", gLR_Players[LR_Prisoner], fDistances[LR_Prisoner], gLR_Players[LR_Guard], fDistances[LR_Guard]);
+    Javit_PrintToChatAll("\x04Prisoner: [\x03%N\x04] - \x05%.02f", gLR_Players[LR_Prisoner], fDistances[LR_Prisoner]);
+    Javit_PrintToChatAll("\x04Guard: [\x03%N\x04] - \x05%.02f", gLR_Players[LR_Guard], fDistances[LR_Guard]);
 
     int iWinner = gLR_Players[(fDistances[LR_Prisoner] > fDistances[LR_Guard])? LR_Prisoner:LR_Guard];
     int iPartner = GetLRPartner(iWinner);
@@ -2089,7 +2270,7 @@ public void Javit_FinishLR(int winner, int loser, LRTypes type)
 
     for(int i = 1; i <= MaxClients; i++)
     {
-        if(IsValidClient(i) && CheckCommandAccess(i, "sm_admin", ADMFLAG_GENERIC) && GetClientTeam(i) >= 2)
+        if(IsClientAuthorized(i) && CheckCommandAccess(i, "sm_admin", ADMFLAG_GENERIC))
         {
             bAdmin = true;
 
@@ -2097,7 +2278,7 @@ public void Javit_FinishLR(int winner, int loser, LRTypes type)
         }
     }
 
-    if(Javit_GetClientAmount(CS_TEAM_T, false) + Javit_GetClientAmount(CS_TEAM_CT, false) >= 14 || bAdmin)
+    if(type != LR_Freeday && (bAdmin || Javit_GetClientAmount(CS_TEAM_T, false) + Javit_GetClientAmount(CS_TEAM_CT, false) >= 14))
     {
         DB_AddWin(winner);
 
@@ -2312,11 +2493,15 @@ public bool ShootFlame(int client, int target, float distance)
     DispatchKeyValue(iFlameEnt, "RenderColor", sColor);
     DispatchKeyValue(iFlameEnt, "RenderAmt", "180");
     DispatchSpawn(iFlameEnt);
-    TeleportEntity(iFlameEnt, fClientOrigin, fAdd, NULL_VECTOR);
-    SetVariantString(sTarget);
+    TeleportEntity(iFlameEnt, fClientOrigin, fEyeAngles, NULL_VECTOR);
+    /*SetVariantString(sTarget);
     AcceptEntityInput(iFlameEnt, "SetParent", iFlameEnt, iFlameEnt, 0);
     SetVariantString("forward");
-    AcceptEntityInput(iFlameEnt, "SetParentAttachment", iFlameEnt, iFlameEnt, 0);
+    AcceptEntityInput(iFlameEnt, "SetParentAttachment", iFlameEnt, iFlameEnt, 0);*/
+    SetVariantString(sTarget);
+    AcceptEntityInput(iFlameEnt, "SetParent", client, client, 0);
+    AcceptEntityInput(iFlameEnt, "SetParentAttachment", client, client, 0);
+
     AcceptEntityInput(iFlameEnt, "TurnOn");
 
     char[] sFlame2Name = new char[32];
@@ -2335,11 +2520,15 @@ public bool ShootFlame(int client, int target, float distance)
     DispatchKeyValue(iFlameEnt2, "Rate", "10");
     DispatchKeyValue(iFlameEnt2, "JetLength", "500");
     DispatchSpawn(iFlameEnt2);
-    TeleportEntity(iFlameEnt2, fClientOrigin, fAdd, NULL_VECTOR);
-    SetVariantString(sTarget);
+    TeleportEntity(iFlameEnt2, fClientOrigin, fEyeAngles, NULL_VECTOR);
+    /*SetVariantString(sTarget);
     AcceptEntityInput(iFlameEnt2, "SetParent", iFlameEnt2, iFlameEnt2, 0);
     SetVariantString("forward");
-    AcceptEntityInput(iFlameEnt2, "SetParentAttachment", iFlameEnt2, iFlameEnt2, 0);
+    AcceptEntityInput(iFlameEnt2, "SetParentAttachment", iFlameEnt2, iFlameEnt2, 0);*/
+
+    AcceptEntityInput(iFlameEnt2, "SetParent", iFlameEnt, iFlameEnt, 0);
+    AcceptEntityInput(iFlameEnt2, "SetParentAttachment", iFlameEnt, iFlameEnt, 0);
+
     AcceptEntityInput(iFlameEnt2, "TurnOn");
 
     DataPack dp = new DataPack();
@@ -2365,11 +2554,15 @@ public Action Timer_KillFlames(Handle Timer, any data)
     for(int i = 1; i <= 2; i++)
     {
         int iFlameEnt = EntRefToEntIndex(ReadPackCell(data));
-        AcceptEntityInput(iFlameEnt, "TurnOff");
 
-        if(IsValidEntity(iFlameEnt))
+        if(iFlameEnt != -1)
         {
-            RemoveEdict(iFlameEnt);
+            AcceptEntityInput(iFlameEnt, "TurnOff");
+
+            if(IsValidEntity(iFlameEnt))
+            {
+                RemoveEdict(iFlameEnt);
+            }
         }
     }
 
@@ -2518,6 +2711,41 @@ public void Explode(int entity, int target)
     }
 
     AcceptEntityInput(entity, "kill");
+}
+
+stock void SetWeaponAmmo(int client, int weapon, int first = -1, int second = -1)
+{
+    if(first != -1)
+    {
+        SetEntData(weapon, gI_Clip1, first);
+    }
+
+    if(second != -1)
+    {
+        if(gG_GameEngine == Game_CSS)
+        {
+            int iAmmo = GetEntProp(weapon, Prop_Send, "m_iPrimaryAmmoType");
+            SetEntData(client, gI_Ammo + (iAmmo * 4), second, 4, true);
+        }
+
+        else
+        {
+            SetEntProp(weapon, Prop_Send, "m_iPrimaryReserveAmmoCount", second);
+        }
+    }
+}
+
+public void DisarmPlayer(int client)
+{
+    for(int i = 0; i < 3; i++)
+    {
+        int weapon = GetPlayerWeaponSlot(client, i);
+
+        if(weapon != -1 && RemovePlayerItem(client, weapon))
+        {
+            AcceptEntityInput(weapon, "Kill");
+        }
+    }
 }
 
 public int Native_GetClientLR(Handle plugin, int numParams)
