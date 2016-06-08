@@ -4,11 +4,16 @@
 #include <cstrike>
 #include <emitsoundany>
 #include <smlib/clients>
+
+#pragma newdecls required
+
+#define PISTOLS
+#define PRIMARIES
+#define SNIPERS
+#define LRNAMES
 #include <javit>
 
 #pragma semicolon 1
-
-#pragma newdecls required
 
 #define PLUGIN_VERSION "1.0b"
 

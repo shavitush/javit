@@ -9,6 +9,7 @@
 #define STOPLR_NOTHING ""
 #define PLACEHOLDER ""
 
+#if defined PISTOLS
 char gS_CSSPistols[][] =
 {
     "weapon_glock",
@@ -56,7 +57,9 @@ char gS_CSGOPistolNames[][] =
     "P2000",
     ".40 Dual Elites (Dual Berettas)"
 };
+#endif
 
+#if defined PRIMARIES
 char gS_CSSPrimaries[][] =
 {
     "weapon_m3",
@@ -154,7 +157,9 @@ char gS_CSGOPrimaryNames[][] =
     "FN M249 Para (M249)",
     "Negev"
 };
+#endif
 
+#if defined SNIPERS
 char gS_CSSSnipers[][] =
 {
     "weapon_scout",
@@ -186,6 +191,7 @@ char gS_CSGOSniperNames[][] =
     "SCAR-20",
     "SSG 08 (Scout)"
 };
+#endif
 
 enum GameEngines(+=1)
 {
@@ -216,6 +222,7 @@ enum LRTypes(+=1)
     LR_Rebel
 };
 
+#if defined LRNAMES
 char gS_LRNames[][] =
 {
     PLACEHOLDER,
@@ -237,6 +244,7 @@ char gS_LRNames[][] =
     "Shotgun Fight",
     "Rebel!"
 };
+#endif
 
 // API
 

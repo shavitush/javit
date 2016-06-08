@@ -38,7 +38,7 @@
     - [x] gun toss
     - [x] shotgun wars with cool effects like hellsgamers
     - [x] rebel
-    - [ ] molotov fight (csgo only)
+    - [ ] molotov fight
     - [ ] freeday/vip (needs JBaddons2 API)
     - [ ] race
 
