@@ -1,0 +1,7 @@
+{
+  "cmd": "G:/scripting/spcomp.exe",
+  "args": [ "-i{PROJECT_PATH}/include", "-oG:/css-ds/cstrike/addons/sourcemod/plugins/{FILE_ACTIVE_NAME_BASE}.smx", "{FILE_ACTIVE}" ],
+  "cwd": "<swag>",
+  "sh": false,
+  "cwd": "{PROJECT_PATH}"
+}

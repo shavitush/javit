@@ -101,8 +101,8 @@ public void OnPluginStart()
     RegConsoleCmd("sm_lr", Command_LastRequest, "Wish something before you finally die.");
     RegConsoleCmd("sm_lastrequest", Command_LastRequest, "Wish something before you finally die.");
 
-    RegConsoleCmd("sm_lrtop", Command_Top, "Opens a menu that shows the top25 jailbreakers!");
     RegConsoleCmd("sm_top", Command_Top, "Opens a menu that shows the top25 jailbreakers!");
+    RegConsoleCmd("sm_lrtop", Command_Top, "Opens a menu that shows the top25 jailbreakers!");
 
     RegAdminCmd("sm_abortlr", Command_AbortLR, ADMFLAG_SLAY, "Aborts the current active LR.");
     RegAdminCmd("sm_stoplr", Command_AbortLR, ADMFLAG_SLAY, "Aborts the current active LR.");
