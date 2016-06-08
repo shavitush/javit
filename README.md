@@ -40,7 +40,7 @@
     - [x] rebel
     - [x] molotov fight (csgo only) - coded, needs testing
     - [x] freeday/vip (needs JBaddons2 API) - done, needs testing in CS:GO
-    - [ ] race
+    - [x] circle of doom - done, needs testing in CS:GO
 
 
 - [x] rankings

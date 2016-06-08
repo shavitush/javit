@@ -48,6 +48,8 @@ float gLR_DeaglePosition[2][3];
 bool gLR_DeaglePositionMeasured[2];
 bool gLR_DroppedDeagle[MAXPLAYERS+1];
 bool gLR_OnGround[MAXPLAYERS+1];
+float gLR_CirclePosition[3];
+
 bool gB_RebelRound = false;
 bool gB_Freeday[MAXPLAYERS+1];
 
@@ -341,7 +343,7 @@ public Action OnTakeDamage(int victim, int &attacker, int &inflictor, float &dam
                 }
             }
 
-            case LR_Backstabs, LR_VintageKnifeFight:
+            case LR_Backstabs, LR_KnifeFight:
             {
                 char[] sWeapon = new char[32];
                 GetClientWeapon(attacker, sWeapon, 32);
@@ -463,6 +465,11 @@ public Action OnTakeDamage(int victim, int &attacker, int &inflictor, float &dam
             case LR_DeagleToss:
             {
                 return Plugin_Handled;
+            }
+
+            case LR_CircleOfDoom:
+            {
+                SlapPlayer(victim, 0, true);
             }
         }
     }
@@ -1043,7 +1050,7 @@ public int MenuHandler_LastRequestCT(Menu m, MenuAction a, int p1, int p2)
                 Javit_InitializeLR(p1, iPartner, view_as<LRTypes>(GetRandomInt(2, sizeof(gS_LRNames) - 1)), true);
             }
 
-            case LR_RussianRoulette:
+            case LR_RussianRoulette, LR_CircleOfDoom:
             {
                 float fClientOrigin[3];
                 GetClientAbsOrigin(p1, fClientOrigin);
@@ -1241,6 +1248,42 @@ public Action Timer_Beacon(Handle Timer)
         if(IsValidClient(gLR_Players[i], true))
         {
             Javit_BeaconEntity(gLR_Players[i], true);
+        }
+    }
+
+    switch(gLR_Current)
+    {
+        case LR_CircleOfDoom:
+        {
+            for(int i = 1; i <= 6; i++)
+            {
+                gLR_CirclePosition[2] += 10;
+
+                if(i == 1)
+                {
+                    TE_SetupBeamRingPoint(gLR_CirclePosition, 220.0, 220.0, gI_BeamSprite, gI_HaloSprite, 0, 0, 0.60, 5.0, 0.0, {255, 0, 0, 255}, 1, 0);
+                    TE_SendToAll();
+                }
+
+                TE_SetupBeamRingPoint(gLR_CirclePosition, 280.0, 280.0, gI_BeamSprite, gI_HaloSprite, 0, 0, 25.0, 0.60, 0.0, {255, 0, 0, 255}, 1, 0);
+                TE_SendToAll();
+            }
+
+            gLR_CirclePosition[2] -= 60;
+
+            float fPosition[sizeof(gLR_Players)][3];
+            GetClientAbsOrigin(gLR_Players[LR_Prisoner], fPosition[LR_Prisoner]);
+            GetClientAbsOrigin(gLR_Players[LR_Guard], fPosition[LR_Guard]);
+
+            if(GetVectorDistance(fPosition[LR_Prisoner], gLR_CirclePosition) > 130.00)
+            {
+                SDKHooks_TakeDamage(gLR_Players[LR_Prisoner], gLR_Players[LR_Guard], gLR_Players[LR_Guard], GetClientHealth(gLR_Players[LR_Prisoner]) * 1.0, CS_DMG_HEADSHOT);
+            }
+
+            else if(GetVectorDistance(fPosition[LR_Guard], gLR_CirclePosition) > 130.00)
+            {
+                SDKHooks_TakeDamage(gLR_Players[LR_Guard], gLR_Players[LR_Prisoner], gLR_Players[LR_Prisoner], GetClientHealth(gLR_Players[LR_Guard]) * 1.0, CS_DMG_HEADSHOT);
+            }
         }
     }
 
@@ -1734,7 +1777,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
             }
         }
 
-        case LR_VintageKnifeFight:
+        case LR_KnifeFight:
         {
             Javit_PrintToChatAll("STAB STAB STAB!");
 
@@ -1828,12 +1871,50 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 GivePlayerItem(gLR_Players[i], "weapon_molotov");
             }
         }
+
+        case LR_CircleOfDoom:
+        {
+            for(int i = 0; i < sizeof(gLR_Players); i++)
+            {
+                PrintHintText(gLR_Players[i], "Starting in 3...");
+
+                Client_RemoveAllWeapons(gLR_Players[i]);
+                SetEntityHealth(gLR_Players[i], 100);
+
+                GivePlayerItem(gLR_Players[i], "weapon_knife");
+
+                SetEntityFlags(gLR_Players[i], GetEntityFlags(gLR_Players[i]) | FL_ATCONTROLS);
+
+                CreateTimer(3.0, Timer_UnfreezePlayers, INVALID_HANDLE, TIMER_FLAG_NO_MAPCHANGE);
+            }
+
+            GetClientAbsOrigin(gLR_Players[LR_Prisoner], gLR_CirclePosition);
+        }
     }
 
     return true;
 }
 
-public Action Timer_DeagleToss(Handle timer)
+public Action Timer_UnfreezePlayers(Handle Timer)
+{
+    if(gLR_Current != LR_CircleOfDoom)
+    {
+        return Plugin_Stop;
+    }
+
+    Javit_PlayMissSound();
+
+    for(int i = 0; i < sizeof(gLR_Players); i++)
+    {
+        PrintHintText(gLR_Players[i], "Stab him out of the circle, GO!!!");
+
+        SetEntityFlags(gLR_Players[i], GetEntityFlags(gLR_Players[i]) & ~FL_ATCONTROLS);
+    }
+
+    return Plugin_Stop;
+}
+
+public Action Timer_DeagleToss(Handle Timer)
 {
     for(int i = 0; i < sizeof(gLR_Players); i++)
     {

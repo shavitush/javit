@@ -214,14 +214,15 @@ enum LRTypes(+=1)
     LR_Headshots,
     LR_Jumpshots,
     LR_RussianRoulette,
-    LR_VintageKnifeFight,
+    LR_KnifeFight,
     LR_Flamethrower,
     LR_DRHax,
     LR_DeagleToss,
     LR_ShotgunFight,
     LR_Rebel,
     LR_Molotovs,
-    LR_Freeday
+    LR_Freeday,
+    LR_CircleOfDoom
 };
 
 #if defined LRNAMES
@@ -239,14 +240,15 @@ char gS_LRNames[][] =
     "Headshots!",
     "Jumpshots!",
     "Russian Roulette",
-    "Vintage Knife Fight",
+    "Knife Fight",
     "Flamethrower",
     "Dr. HAX!",
     "Deagle Toss",
     "Shotgun Fight",
     "Rebel!",
     "Molotovs",
-    "Freeday"
+    "Freeday",
+    "Circle of Doom"
 };
 #endif
 
