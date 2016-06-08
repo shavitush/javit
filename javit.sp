@@ -4,6 +4,7 @@
 #include <cstrike>
 #include <emitsoundany>
 #include <smlib/clients>
+#include <jbaddons>
 
 #pragma newdecls required
 
@@ -48,6 +49,7 @@ bool gLR_DeaglePositionMeasured[2];
 bool gLR_DroppedDeagle[MAXPLAYERS+1];
 bool gLR_OnGround[MAXPLAYERS+1];
 bool gB_RebelRound = false;
+bool gB_Freeday[MAXPLAYERS+1];
 
 int gI_BeamSprite = -1;
 int gI_HaloSprite = -1;
@@ -75,7 +77,7 @@ public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max
 
     CreateNative("Javit_GetClientLR", Native_GetClientLR);
     CreateNative("Javit_GetLRName", Native_GetLRName);
-    CreateNative("Javit_GetClientPartner", native_GetClientPartner);
+    CreateNative("Javit_GetClientPartner", Native_GetClientPartner);
 
     gB_Late = late;
 
@@ -154,6 +156,7 @@ public void OnClientPutInServer(int client)
     gLR_ChosenRequest[client] = LR_None;
     gLR_SpecialCooldown[client] = 0.0;
     gLR_DroppedDeagle[client] = false;
+    gB_Freeday[client] = false;
 
     SDKHook(client, SDKHook_OnTakeDamage, OnTakeDamage);
     SDKHook(client, SDKHook_WeaponCanUse, WeaponEquip);
@@ -776,6 +779,18 @@ public void Weapon_Fire(Event e, const char[] name, bool dB)
                 }
             }
         }
+
+        case LR_Molotovs:
+        {
+            if(StrEqual(sWeapon, "molotov"))
+            {
+                DataPack dp = new DataPack();
+                dp.WriteCell(GetClientSerial(client));
+                dp.WriteString("weapon_molotov");
+
+                CreateTimer(0.40, AutoSwitchTimer, dp);
+            }
+        }
     }
 
     return;
@@ -838,7 +853,7 @@ public Action AutoSwitchTimer(Handle Timer, any data)
 
     FakeClientCommand(client, "use weapon_knife");
 
-    if(StrEqual(sWeapon, "weapon_hegrenade"))
+    if(!StrEqual(sWeapon, "weapon_flashbang"))
     {
         int iWeapon = GivePlayerItem(client, sWeapon);
 
@@ -846,10 +861,7 @@ public Action AutoSwitchTimer(Handle Timer, any data)
         ChangeEdictState(client, FindDataMapOffs(client, "m_hActiveWeapon"));
     }
 
-    else
-    {
-        FakeClientCommand(client, "use %s", sWeapon);
-    }
+    FakeClientCommand(client, "use %s", sWeapon);
 
     return Plugin_Stop;
 }
@@ -857,6 +869,28 @@ public Action AutoSwitchTimer(Handle Timer, any data)
 public void Round_Start(Event e, const char[] name, bool dB)
 {
     Javit_StopLR(STOPLR_NOTHING);
+
+    int iT = Javit_GetClientAmount(CS_TEAM_T, false);
+
+    for(int i = 1; i <= MaxClients; i++)
+    {
+        if(gB_Freeday[i])
+        {
+            if(iT < 5)
+            {
+                Javit_PrintToChat(i, "There are only \x05%d Terrorists\x01 alive, there must be at least 5 to claim your freeday.", iT);
+            }
+
+            else
+            {
+                Javit_SetVIP(i, true);
+
+                Javit_PrintToChatAll("\x03%N\x01 picked to have a \x05freeday\x01 as his previous LR!", i);
+            }
+
+            gB_Freeday[i] = false;
+        }
+    }
 }
 
 public void Round_End(Event e, const char[] name, bool dB)
@@ -932,22 +966,37 @@ public int MenuHandler_LastRequestType(Menu m, MenuAction a, int p1, int p2)
 
         LRTypes LRChosen = view_as<LRTypes>(iLR);
 
-        if(LRChosen == LR_Rebel)
+        switch(LRChosen)
         {
-            gB_RebelRound = true;
+            case LR_Rebel:
+            {
+                gB_RebelRound = true;
 
-            SetEntityHealth(p1, 140 + (90 * Javit_GetClientAmount(CS_TEAM_CT, true)));
+                SetEntityHealth(p1, 140 + (90 * Javit_GetClientAmount(CS_TEAM_CT, true)));
 
-            Client_RemoveAllWeapons(p1);
-            GivePlayerItem(p1, "weapon_knife");
-            Client_GiveWeaponAndAmmo(p1, "weapon_deagle", false, 9999);
-            Client_GiveWeaponAndAmmo(p1, gG_GameEngine == Game_CSGO? "weapon_negev":"weapon_m249", true, 9999);
+                Client_RemoveAllWeapons(p1);
+                GivePlayerItem(p1, "weapon_knife");
+                Client_GiveWeaponAndAmmo(p1, "weapon_deagle", false, 9999);
+                Client_GiveWeaponAndAmmo(p1, gG_GameEngine == Game_CSGO? "weapon_negev":"weapon_m249", true, 9999);
 
-            Javit_PlayMissSound();
+                Javit_PlayMissSound();
 
-            Javit_PrintToChatAll("\x03%N\x01 chose to be a \x04REBEL!\x01", p1);
+                Javit_PrintToChatAll("\x03%N\x01 chose to be a \x04REBEL!\x01", p1);
 
-            return 0;
+                return 0;
+            }
+
+            case LR_Freeday:
+            {
+                gB_Freeday[p1] = true;
+
+                ForcePlayerSuicide(p1);
+                Javit_PlayWowSound();
+
+                Javit_PrintToChatAll("\x03%N\x01 chose to have a \x05freeday\x01 tomorrow!", p1);
+
+                return 0;
+            }
         }
 
         gLR_ChosenRequest[p1] = LRChosen;
@@ -1765,6 +1814,20 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 Client_GiveWeaponAndAmmo(gLR_Players[i], "weapon_xm1014", true, 9999);
             }
         }
+
+        case LR_Molotovs:
+        {
+            for(int i = 0; i < sizeof(gLR_Players); i++)
+            {
+                PrintHintText(gLR_Players[i], "Burn him before he burns you.");
+
+                Client_RemoveAllWeapons(gLR_Players[i]);
+                SetEntityHealth(gLR_Players[i], 200);
+
+                GivePlayerItem(gLR_Players[i], "weapon_knife");
+                GivePlayerItem(gLR_Players[i], "weapon_molotov");
+            }
+        }
     }
 
     return true;
@@ -1973,6 +2036,17 @@ public Action Javit_ShowLRMenu(int client)
 
     for(int i = 1; i < sizeof(gS_LRNames); i++)
     {
+        // add any csgo exclusive lrs here
+        if(gG_GameEngine != Game_CSGO && i == view_as<int>(LR_Molotovs))
+        {
+            continue;
+        }
+
+        if(!LibraryExists("jbaddons") && i == view_as<int>(LR_Freeday))
+        {
+            continue;
+        }
+
         char[] sInfo = new char[8];
         IntToString(i, sInfo, 8);
 
@@ -2384,7 +2458,7 @@ public int Native_GetLRName(Handle plugin, int numParams)
     return SetNativeString(2, gS_LRNames[lr], GetNativeCell(3), true);
 }
 
-public int native_GetClientPartner(Handle plugin, int numParams)
+public int Native_GetClientPartner(Handle plugin, int numParams)
 {
     return GetLRPartner(GetNativeCell(1));
 }

@@ -219,7 +219,9 @@ enum LRTypes(+=1)
     LR_DRHax,
     LR_DeagleToss,
     LR_ShotgunFight,
-    LR_Rebel
+    LR_Rebel,
+    LR_Molotovs,
+    LR_Freeday
 };
 
 #if defined LRNAMES
@@ -242,7 +244,9 @@ char gS_LRNames[][] =
     "Dr. HAX!",
     "Deagle Toss",
     "Shotgun Fight",
-    "Rebel!"
+    "Rebel!",
+    "Molotovs",
+    "Freeday"
 };
 #endif
 
