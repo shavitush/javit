@@ -8,7 +8,6 @@
 
 #undef REQUIRE_PLUGIN
 #include <jbaddons>
-#include <sourcecomms>
 
 #pragma newdecls required
 
@@ -25,7 +24,6 @@
 #define DEBUG
 
 bool gB_Late = false;
-bool gB_SourceComms = false;
 
 GameEngines gG_GameEngine = Game_Unknown;
 
@@ -56,6 +54,7 @@ bool gLR_OnGround[MAXPLAYERS+1];
 float gLR_CirclePosition[3];
 int gLR_Weapon[MAXPLAYERS+1];
 int gLR_TemporaryPartner[MAXPLAYERS+1];
+float gF_DoomTime = 0.0;
 
 bool gB_RebelRound = false;
 bool gB_Freeday[MAXPLAYERS+1];
@@ -166,8 +165,6 @@ public void OnPluginStart()
 
     gI_Clip1 = FindSendPropInfo("CBaseCombatWeapon", "m_iClip1");
     gI_Ammo = FindSendPropInfo("CCSPlayer", "m_iAmmo");
-
-    gB_SourceComms = LibraryExists("sourcecomms");
 }
 
 public void OnClientPutInServer(int client)
@@ -385,23 +382,31 @@ public Action OnTakeDamage(int victim, int &attacker, int &inflictor, float &dam
             case LR_Headshots, LR_Jumpshots:
             {
                 char[] sWeapon = new char[32];
-                int iWeapon = GetClientWeapon(attacker, sWeapon, 32);
+                GetClientWeapon(attacker, sWeapon, 32);
 
                 bool bShouldWork = false;
 
                 if(gLR_Current == LR_Headshots)
                 {
-                    bShouldWork = StrEqual(sWeapon, "weapon_deagle") && damagetype & CS_DMG_HEADSHOT;
+                    bShouldWork = (StrContains(sWeapon, "deagle") != -1 && damagetype & CS_DMG_HEADSHOT);
                 }
 
                 else if(gLR_Current == LR_Jumpshots)
                 {
-                    bShouldWork = !IsKnife(sWeapon) && !(GetEntityFlags(attacker) & FL_ONGROUND);
+                    bShouldWork = (!IsKnife(sWeapon) && !(GetEntityFlags(attacker) & FL_ONGROUND));
                 }
 
-                if(bShouldWork && iWeapon > MaxClients)
+                if(bShouldWork && IsValidEntity(weapon))
     			{
-                    SDKHooks_TakeDamage(victim, attacker, attacker, GetClientHealth(victim) * 1.0, CS_DMG_HEADSHOT, iWeapon);
+                    if(gLR_Current == LR_Headshots)
+                    {
+                        SDKHooks_TakeDamage(victim, attacker, attacker, GetClientHealth(victim) * 1.0, CS_DMG_HEADSHOT, weapon);
+                    }
+
+                    else
+                    {
+                        SDKHooks_TakeDamage(victim, attacker, attacker, damage, damagetype, weapon);
+                    }
 
                     TE_SetupExplosion(damagePosition, gI_ExplosionSprite, 5.0, 1, 0, 50, 40);
                     TE_SendToAll();
@@ -498,7 +503,10 @@ public Action OnTakeDamage(int victim, int &attacker, int &inflictor, float &dam
 
             case LR_CircleOfDoom:
             {
-                SlapPlayer(victim, 0, true);
+                if(GetEngineTime() - gF_DoomTime >= 3.0)
+                {
+                    SlapPlayer(victim, 0, true);
+                }
 
                 return Plugin_Handled;
             }
@@ -591,7 +599,7 @@ public void Player_Spawn(Event e, const char[] name, bool dB)
 
     gLR_Weapon[client] = -1;
 
-    CreateTimer(0.10, Timer_Equip, GetClientSerial(client));
+    CreateTimer(0.50, Timer_Equip, GetClientSerial(client));
 }
 
 public Action Timer_Equip(Handle Timer, any data)
@@ -603,7 +611,7 @@ public Action Timer_Equip(Handle Timer, any data)
         return Plugin_Stop;
     }
 
-    DisarmPlayer(client);
+    Client_RemoveAllWeapons(client);
 
     SetEntityHealth(client, 100);
     SetEntityGravity(client, 1.0);
@@ -631,12 +639,7 @@ public void Player_Death(Event e, const char[] name, bool dB)
     userid = e.GetInt("attacker");
     int attacker = GetClientOfUserId(userid);
 
-    if(attacker == 0 || (!IsValidClient(attacker) && !IsValidClient(victim)))
-    {
-        return;
-    }
-
-    if(gLR_Current != LR_None && attacker == gLR_Players[LR_Guard] || victim == gLR_Players[LR_Guard])
+    if(gLR_Current != LR_None && gLR_Current != LR_Rebel && (victim == gLR_Players[LR_Guard] || victim == gLR_Players[LR_Prisoner] || attacker == gLR_Players[LR_Guard] || attacker == gLR_Players[LR_Prisoner]))
     {
         switch(gLR_Current)
         {
@@ -649,7 +652,7 @@ public void Player_Death(Event e, const char[] name, bool dB)
             }
         }
 
-        Javit_FinishLR(attacker, victim, gLR_Current);
+        Javit_FinishLR(GetLRPartner(victim), victim, gLR_Current);
     }
 
     if(Javit_IsItLRTime())
@@ -916,7 +919,7 @@ public Action AutoSwitchTimer(Handle Timer, any data)
         int iWeapon = GivePlayerItem(client, sWeapon);
 
         SetEntPropEnt(client, Prop_Data, "m_hActiveWeapon", iWeapon);
-        ChangeEdictState(client, FindDataMapOffs(client, "m_hActiveWeapon"));
+        ChangeEdictState(client, FindDataMapInfo(client, "m_hActiveWeapon"));
     }
 
     FakeClientCommand(client, "use %s", sWeapon);
@@ -1113,6 +1116,16 @@ public int MenuHandler_LastRequestCT(Menu m, MenuAction a, int p1, int p2)
 
             case LR_RussianRoulette, LR_CircleOfDoom:
             {
+                if(!IsSafeTeleport(p1, 250.0))
+                {
+                    Javit_PrintToChat(p1, "ERROR: Your partner cannot teleport to this place!");
+                    Javit_PrintToChat(p1, "Please look at somewhere else.");
+
+                    Javit_ShowLRMenu(p1);
+
+                    return 0;
+                }
+
                 float fClientOrigin[3];
                 GetClientAbsOrigin(p1, fClientOrigin);
 
@@ -1142,18 +1155,6 @@ public int MenuHandler_LastRequestCT(Menu m, MenuAction a, int p1, int p2)
                 fClientOrigin[2] += 12.0;
 
                 TeleportEntity(iPartner, fClientOrigin, fEyeAngles, fZeroSpeed);
-
-                if(GetClientAimTarget(p1, false) != iPartner || !IsSafeTeleport(p1, 250.0))
-                {
-                    Javit_PrintToChat(p1, "ERROR: Your partner cannot teleport to this place!");
-                    Javit_PrintToChat(p1, "Please look at somewhere else.");
-
-                    Javit_ShowLRMenu(p1);
-
-                    TeleportEntity(iPartner, fPartnerOrigin, NULL_VECTOR, NULL_VECTOR);
-
-                    return 0;
-                }
 
                 Javit_InitializeLR(p1, iPartner, gLR_ChosenRequest[p1], false);
 
@@ -1404,11 +1405,16 @@ public Action Timer_Beacon(Handle Timer)
         return Plugin_Continue;
     }
 
-    for(int i = 0; i < sizeof(gLR_Players); i++)
+    EmitSoundToAllAny("javit/lr_beep_v1.mp3", SOUND_FROM_PLAYER, SNDCHAN_STATIC, 20);
+
+    if(gLR_Current != LR_CircleOfDoom)
     {
-        if(IsValidClient(gLR_Players[i], true))
+        for(int i = 0; i < sizeof(gLR_Players); i++)
         {
-            Javit_BeaconEntity(gLR_Players[i], true);
+            if(IsValidClient(gLR_Players[i], true))
+            {
+                Javit_BeaconEntity(gLR_Players[i]);
+            }
         }
     }
 
@@ -1416,32 +1422,31 @@ public Action Timer_Beacon(Handle Timer)
     {
         case LR_CircleOfDoom:
         {
-            for(int i = 1; i <= 6; i++)
+            for(int i = 1; i <= 3; i++)
             {
-                gLR_CirclePosition[2] += 10;
+                int color[4] = {0, 0, 0, 255};
+                color[0] = GetRandomInt(0, 255);
+                color[1] = GetRandomInt(0, 255);
+                color[2] = GetRandomInt(0, 255);
 
-                if(i == 1)
-                {
-                    TE_SetupBeamRingPoint(gLR_CirclePosition, 220.0, 220.0, gI_BeamSprite, gI_HaloSprite, 0, 0, 0.60, 5.0, 0.0, {255, 0, 0, 255}, 1, 0);
-                    TE_SendToAll();
-                }
+                gLR_CirclePosition[2] += 20.0;
 
-                TE_SetupBeamRingPoint(gLR_CirclePosition, 280.0, 280.0, gI_BeamSprite, gI_HaloSprite, 0, 0, 25.0, 0.60, 0.0, {255, 0, 0, 255}, 1, 0);
+                TE_SetupBeamRingPoint(gLR_CirclePosition, 299.90, 300.0, gI_BeamSprite, gI_HaloSprite, 0, 60, 0.6, 5.0, 0.00, color, 10, 0);
                 TE_SendToAll();
             }
 
-            gLR_CirclePosition[2] -= 60;
+            gLR_CirclePosition[2] -= 60.0;
 
             float fPosition[sizeof(gLR_Players)][3];
             GetClientAbsOrigin(gLR_Players[LR_Prisoner], fPosition[LR_Prisoner]);
             GetClientAbsOrigin(gLR_Players[LR_Guard], fPosition[LR_Guard]);
 
-            if(GetVectorDistance(fPosition[LR_Prisoner], gLR_CirclePosition) > 130.00)
+            if(GetVectorDistance(fPosition[LR_Prisoner], gLR_CirclePosition) > 150.00)
             {
                 SDKHooks_TakeDamage(gLR_Players[LR_Prisoner], gLR_Players[LR_Guard], gLR_Players[LR_Guard], GetClientHealth(gLR_Players[LR_Prisoner]) * 1.0, CS_DMG_HEADSHOT);
             }
 
-            else if(GetVectorDistance(fPosition[LR_Guard], gLR_CirclePosition) > 130.00)
+            else if(GetVectorDistance(fPosition[LR_Guard], gLR_CirclePosition) > 150.00)
             {
                 SDKHooks_TakeDamage(gLR_Players[LR_Guard], gLR_Players[LR_Prisoner], gLR_Players[LR_Prisoner], GetClientHealth(gLR_Players[LR_Guard]) * 1.0, CS_DMG_HEADSHOT);
             }
@@ -1565,7 +1570,7 @@ public int Javit_GetClientAmount(int team, bool alive)
     return iAlive;
 }
 
-public void Javit_BeaconEntity(int entity, bool sound)
+public void Javit_BeaconEntity(int entity)
 {
     float origin[3];
 
@@ -1588,11 +1593,6 @@ public void Javit_BeaconEntity(int entity, bool sound)
 
     TE_SetupBeamRingPoint(origin, 10.0, 250.0, gI_BeamSprite, gI_HaloSprite, 0, 60, 0.75, 2.5, 0.0, colors, 10, 0);
     TE_SendToAll();
-
-    if(sound)
-    {
-        EmitAmbientSoundAny("javit/lr_activated.mp3", origin, entity, 153); // 60% out of 255
-    }
 }
 
 public void Javit_AnnounceLR()
@@ -2080,6 +2080,8 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 CreateTimer(3.0, Timer_UnfreezePlayers, INVALID_HANDLE, TIMER_FLAG_NO_MAPCHANGE);
             }
 
+            gF_DoomTime = GetEngineTime();
+
             GetClientAbsOrigin(gLR_Players[LR_Prisoner], gLR_CirclePosition);
         }
     }
@@ -2220,7 +2222,7 @@ public Action Timer_SwitchToWeapon(Handle Timer, any data)
     }
 
     SetEntPropEnt(client, Prop_Data, "m_hActiveWeapon", iWeapon);
-    ChangeEdictState(client, FindDataMapOffs(client, "m_hActiveWeapon"));
+    ChangeEdictState(client, FindDataMapInfo(client, "m_hActiveWeapon"));
 
     return Plugin_Stop;
 }
@@ -2375,7 +2377,7 @@ public Action OnPlayerRunCmd(int client, int &buttons)
 
 public bool Javit_IsItLRTime()
 {
-    return (Javit_GetClientAmount(CS_TEAM_T, true) == 1 && Javit_GetClientAmount(CS_TEAM_CT, true) > 0);
+    return (gLR_Current == LR_None && Javit_GetClientAmount(CS_TEAM_T, true) == 1 && Javit_GetClientAmount(CS_TEAM_CT, true) > 0);
 }
 
 public bool bFilterNothing(int entity, int mask)
@@ -2762,7 +2764,7 @@ public void DisarmPlayer(int client)
 
 public bool IsKnife(const char[] weapon)
 {
-    return !(StrContains(weapon, "knife") == -1 && StrContains(weapon, "bayonet") == -1);
+    return StrContains(weapon, "knife") != -1 || StrContains(weapon, "bayonet") != -1;
 }
 
 public int Native_GetClientLR(Handle plugin, int numParams)
@@ -2791,5 +2793,5 @@ public int Native_GetClientPartner(Handle plugin, int numParams)
 
 stock bool IsValidClient(int client, bool bAlive = false)
 {
-    return (IsClientConnected(client) && IsClientInGame(client) && (!bAlive || IsPlayerAlive(client)));
+    return (client > 0 && IsClientConnected(client) && IsClientInGame(client) && (!bAlive || IsPlayerAlive(client)));
 }

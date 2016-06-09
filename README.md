@@ -41,6 +41,7 @@
     - [x] molotov fight (csgo only) - coded, needs testing
     - [x] freeday/vip (needs JBaddons2 API) - done, needs testing in CS:GO
     - [x] circle of doom - done, needs testing in CS:GO
+    - [ ] dash fight - https://gist.github.com/7b64ebe83843e710d2542b456650d76b
 
 
 - [x] rankings
