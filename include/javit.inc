@@ -275,6 +275,13 @@ forward bool Javit_OnLRStart(LRTypes type, int prisoner, int guard);
 forward void Javit_OnLRFinish(LRTypes type, int winner, int loser);
 
 /**
+ * Called when an LR is available.
+ *
+ * @noreturn
+ */
+forward void Javit_OnLRAvailable();
+
+/**
  * Gets the current LR the player is in right now.
  *
  * @param client    Client index.

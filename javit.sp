@@ -8,6 +8,7 @@
 
 #undef REQUIRE_PLUGIN
 #include <jbaddons>
+#include <sourcecomms>
 
 #pragma newdecls required
 
@@ -19,11 +20,12 @@
 
 #pragma semicolon 1
 
-#define PLUGIN_VERSION "1.0b"
+#define PLUGIN_VERSION "1.1b"
 
 #define DEBUG
 
 bool gB_Late = false;
+bool gB_SourceComms = false;
 
 GameEngines gG_GameEngine = Game_Unknown;
 
@@ -84,6 +86,8 @@ public Plugin myinfo =
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
 {
     RegPluginLibrary("javit");
+
+    MarkNativeAsOptional("Javit_SetVIP");
 
     CreateNative("Javit_GetClientLR", Native_GetClientLR);
     CreateNative("Javit_GetLRName", Native_GetLRName);
@@ -162,6 +166,8 @@ public void OnPluginStart()
 
     gI_Clip1 = FindSendPropInfo("CBaseCombatWeapon", "m_iClip1");
     gI_Ammo = FindSendPropInfo("CCSPlayer", "m_iAmmo");
+
+    gB_SourceComms = LibraryExists("sourcecomms");
 }
 
 public void OnClientPutInServer(int client)
@@ -359,7 +365,7 @@ public Action OnTakeDamage(int victim, int &attacker, int &inflictor, float &dam
                 char[] sWeapon = new char[32];
                 GetClientWeapon(attacker, sWeapon, 32);
 
-                if(!StrEqual(sWeapon, "weapon_knife") || (gLR_Current == LR_Backstabs && damage < 100))
+                if(!IsKnife(sWeapon) || (gLR_Current == LR_Backstabs && damage < 100))
     			{
     				return Plugin_Handled;
     			}
@@ -390,10 +396,10 @@ public Action OnTakeDamage(int victim, int &attacker, int &inflictor, float &dam
 
                 else if(gLR_Current == LR_Jumpshots)
                 {
-                    bShouldWork = !(StrEqual(sWeapon, "weapon_knife") || GetEntityFlags(attacker) & FL_ONGROUND);
+                    bShouldWork = !IsKnife(sWeapon) && !(GetEntityFlags(attacker) & FL_ONGROUND);
                 }
 
-                if(bShouldWork)
+                if(bShouldWork && iWeapon > MaxClients)
     			{
                     SDKHooks_TakeDamage(victim, attacker, attacker, GetClientHealth(victim) * 1.0, CS_DMG_HEADSHOT, iWeapon);
 
@@ -526,7 +532,8 @@ public void OnMapStart()
 
     PrecacheModel(gSLR_MonitorModel);
 
-    PrecacheSoundAny("buttons/blip1.wav", true);
+    AddFileToDownloadsTable("sound/javit/lr_beep_v1.mp3");
+    PrecacheSoundAny("javit/lr_beep_v1.mp3", true);
 
     AddFileToDownloadsTable("sound/javit/lr_activated.mp3");
     PrecacheSoundAny("javit/lr_activated.mp3", true);
@@ -778,7 +785,7 @@ public void Weapon_Fire(Event e, const char[] name, bool dB)
         {
             int iPartner = GetLRPartner(client);
 
-            if((StrEqual(sWeapon, "knife") || StrEqual(sWeapon, "weapon_knife")) && ShootFlame(client, iPartner, 280.00))
+            if(IsKnife(sWeapon) && ShootFlame(client, iPartner, 280.00))
             {
                 IgniteEntity(iPartner, 1.00, false);
             }
@@ -786,7 +793,7 @@ public void Weapon_Fire(Event e, const char[] name, bool dB)
 
         case LR_DRHax:
         {
-            if(StrEqual(sWeapon, "weapon_knife"))
+            if(IsKnife(sWeapon))
             {
                 ShootMonitor(client);
             }
@@ -794,7 +801,7 @@ public void Weapon_Fire(Event e, const char[] name, bool dB)
 
         case LR_ShotgunFight:
         {
-            if(StrEqual(sWeapon, "xm1014") || StrEqual(sWeapon, "weapon_xm1014"))
+            if(StrContains(sWeapon, "xm1014") != -1)
             {
                 int color[4] = {0, 0, 0, 255};
 
@@ -833,7 +840,7 @@ public void Weapon_Fire(Event e, const char[] name, bool dB)
 
         case LR_Molotovs:
         {
-            if(StrEqual(sWeapon, "molotov"))
+            if(StrContains(sWeapon, "molotov") != -1)
             {
                 DataPack dp = new DataPack();
                 dp.WriteCell(GetClientSerial(client));
@@ -951,7 +958,7 @@ public void Round_End(Event e, const char[] name, bool dB)
 
 public Action Command_LastRequest(int client, int args)
 {
-    if(!IsValidClient(client, false))
+    if(!IsValidClient(client))
     {
         return Plugin_Handled;
     }
@@ -1027,8 +1034,7 @@ public int MenuHandler_LastRequestType(Menu m, MenuAction a, int p1, int p2)
 
                 Client_RemoveAllWeapons(p1);
 
-                int iKnife = GivePlayerItem(p1, "weapon_knife");
-                EquipPlayerWeapon(p1, iKnife);
+                GivePlayerItem(p1, "weapon_knife");
 
                 int iDeagle = GivePlayerItem(p1, "weapon_deagle");
                 SetWeaponAmmo(p1, iDeagle, 9999, 0);
@@ -1101,6 +1107,8 @@ public int MenuHandler_LastRequestCT(Menu m, MenuAction a, int p1, int p2)
             case LR_RandomLR:
             {
                 Javit_InitializeLR(p1, iPartner, view_as<LRTypes>(GetRandomInt(2, sizeof(gS_LRNames) - 1)), true);
+
+                gLR_Weapon[p1] = -2;
             }
 
             case LR_RussianRoulette, LR_CircleOfDoom:
@@ -1148,6 +1156,8 @@ public int MenuHandler_LastRequestCT(Menu m, MenuAction a, int p1, int p2)
                 }
 
                 Javit_InitializeLR(p1, iPartner, gLR_ChosenRequest[p1], false);
+
+                return 0;
             }
 
             case LR_Shot4Shot, LR_NoScopeBattle:
@@ -1214,11 +1224,15 @@ public int MenuHandler_LastRequestCT(Menu m, MenuAction a, int p1, int p2)
                 menu.ExitBackButton = true;
 
                 menu.Display(p1, 20);
+
+                return 0;
             }
 
             default:
             {
                 Javit_InitializeLR(p1, iPartner, gLR_ChosenRequest[p1], false);
+
+                return 0;
             }
         }
     }
@@ -1530,7 +1544,6 @@ public void Javit_StopLR(const char[] message, any ...)
     if(gLR_DeagleTossTimer != null)
     {
         KillTimer(gLR_DeagleTossTimer);
-
         gLR_DeagleTossTimer = null;
     }
 }
@@ -1578,7 +1591,7 @@ public void Javit_BeaconEntity(int entity, bool sound)
 
     if(sound)
     {
-        EmitAmbientSoundAny("buttons/blip1.wav", origin, entity, SNDLEVEL_RAIDSIREN);
+        EmitAmbientSoundAny("javit/lr_activated.mp3", origin, entity, 153); // 60% out of 255
     }
 }
 
@@ -1816,8 +1829,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 SetEntityHealth(gLR_Players[i], 100);
                 SetEntProp(gLR_Players[i], Prop_Send, "m_ArmorValue", 100);
 
-                int iKnife = GivePlayerItem(gLR_Players[i], "weapon_knife");
-                EquipPlayerWeapon(gLR_Players[i], iKnife);
+                GivePlayerItem(gLR_Players[i], "weapon_knife");
 
                 DataPack dp = new DataPack();
                 dp.WriteCell(GetClientSerial(gLR_Players[i]));
@@ -2748,6 +2760,11 @@ public void DisarmPlayer(int client)
     }
 }
 
+public bool IsKnife(const char[] weapon)
+{
+    return !(StrContains(weapon, "knife") == -1 && StrContains(weapon, "bayonet") == -1);
+}
+
 public int Native_GetClientLR(Handle plugin, int numParams)
 {
     int client = GetNativeCell(1);
@@ -2772,7 +2789,7 @@ public int Native_GetClientPartner(Handle plugin, int numParams)
     return GetLRPartner(GetNativeCell(1));
 }
 
-stock bool IsValidClient(int client, bool bAlive = true)
+stock bool IsValidClient(int client, bool bAlive = false)
 {
     return (IsClientConnected(client) && IsClientInGame(client) && (!bAlive || IsPlayerAlive(client)));
 }
