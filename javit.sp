@@ -275,8 +275,13 @@ public Action WeaponEquip(int client, int weapon)
 
 public Action OnTakeDamage(int victim, int &attacker, int &inflictor, float &damage, int &damagetype, int &weapon, float damageForce[3], float damagePosition[3])
 {
-    if(gLR_Current != LR_None && (victim == gLR_Players[LR_Prisoner] || victim == gLR_Players[LR_Guard]))
+    if(gLR_Current != LR_None)
     {
+        if((Javit_GetClientLR(attacker) == LR_None && Javit_GetClientLR(victim) != LR_None) || (Javit_GetClientLR(attacker) != LR_None && Javit_GetClientLR(victim) == LR_None))
+        {
+            return Plugin_Handled;
+        }
+
         int iPartner = GetLRPartner(victim);
 
         if(damagetype != DMG_BURN)
@@ -1150,11 +1155,9 @@ public int MenuHandler_LastRequestCT(Menu m, MenuAction a, int p1, int p2)
 
                 float fPartnerOrigin[3];
                 GetClientAbsOrigin(iPartner, fPartnerOrigin);
-
-                float fZeroSpeed[3] = {0.0, 0.0, 0.001};
                 fClientOrigin[2] += 12.0;
 
-                TeleportEntity(iPartner, fClientOrigin, fEyeAngles, fZeroSpeed);
+                TeleportEntity(iPartner, fClientOrigin, fEyeAngles, view_as<float>({0.0, 0.0, 0.0}));
 
                 Javit_InitializeLR(p1, iPartner, gLR_ChosenRequest[p1], false);
 
