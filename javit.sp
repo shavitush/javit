@@ -19,9 +19,9 @@
 
 #pragma semicolon 1
 
-#define PLUGIN_VERSION "1.1b"
+#define PLUGIN_VERSION "1.2b"
 
-#define DEBUG
+// #define DEBUG
 
 bool gB_Late = false;
 
@@ -277,12 +277,12 @@ public Action OnTakeDamage(int victim, int &attacker, int &inflictor, float &dam
 {
     if(gLR_Current != LR_None)
     {
-        if((Javit_GetClientLR(attacker) == LR_None && Javit_GetClientLR(victim) != LR_None) || (Javit_GetClientLR(attacker) != LR_None && Javit_GetClientLR(victim) == LR_None))
+        int iPartner = GetLRPartner(victim);
+
+        if(iPartner != inflictor && (Javit_GetClientLR(attacker) == LR_None && Javit_GetClientLR(victim) != LR_None) || (Javit_GetClientLR(attacker) != LR_None && Javit_GetClientLR(victim) == LR_None))
         {
             return Plugin_Handled;
         }
-
-        int iPartner = GetLRPartner(victim);
 
         if(damagetype != DMG_BURN)
         {
@@ -604,7 +604,7 @@ public void Player_Spawn(Event e, const char[] name, bool dB)
 
     gLR_Weapon[client] = -1;
 
-    CreateTimer(0.50, Timer_Equip, GetClientSerial(client));
+    CreateTimer(0.01, Timer_Equip, GetClientSerial(client));
 }
 
 public Action Timer_Equip(Handle Timer, any data)
@@ -621,12 +621,15 @@ public Action Timer_Equip(Handle Timer, any data)
     SetEntityHealth(client, 100);
     SetEntityGravity(client, 1.0);
 
-    GivePlayerItem(client, "weapon_knife");
+    int iWeapon = GivePlayerItem(client, "weapon_knife");
+    EquipPlayerWeapon(client, iWeapon);
 
     if(GetClientTeam(client) == CS_TEAM_CT)
     {
         GivePlayerItem(client, "weapon_deagle");
-        GivePlayerItem(client, gG_GameEngine == Game_CSS? "weapon_m4a1":"weapon_m4a1_silencer");
+
+        int iRifle = GivePlayerItem(client, gG_GameEngine == Game_CSS? "weapon_m4a1":"weapon_m4a1_silencer");
+        EquipPlayerWeapon(client, iRifle);
 
         SetEntProp(client, Prop_Send, "m_ArmorValue", 100);
     }
@@ -699,13 +702,15 @@ public void Player_Jump(Event e, const char[] name, bool dB)
 
 public void Weapon_Fire(Event e, const char[] name, bool dB)
 {
-    if(gLR_Current == LR_None)
+    /*if(gLR_Current == LR_None)
     {
         return;
-    }
+    }*/
 
     int userid = e.GetInt("userid");
     int client = GetClientOfUserId(userid);
+
+    ShootFlame(client, client, 280.00);
 
     if(!IsValidClient(client, true) || (client != gLR_Players[LR_Prisoner] && client != gLR_Players[LR_Guard]))
     {
@@ -1045,11 +1050,11 @@ public int MenuHandler_LastRequestType(Menu m, MenuAction a, int p1, int p2)
                 GivePlayerItem(p1, "weapon_knife");
 
                 int iDeagle = GivePlayerItem(p1, "weapon_deagle");
-                SetWeaponAmmo(p1, iDeagle, 9999, 0);
+                SetWeaponAmmo(p1, iDeagle, 32767, 0);
                 EquipPlayerWeapon(p1, iDeagle);
 
                 int iMAG = GivePlayerItem(p1, gG_GameEngine == Game_CSGO? "weapon_negev":"weapon_m249");
-                SetWeaponAmmo(p1, iMAG, 9999, 0);
+                SetWeaponAmmo(p1, iMAG, 32767, 0);
                 EquipPlayerWeapon(p1, iMAG);
                 SetEntPropEnt(p1, Prop_Data, "m_hActiveWeapon", iMAG);
 
@@ -1114,9 +1119,55 @@ public int MenuHandler_LastRequestCT(Menu m, MenuAction a, int p1, int p2)
         {
             case LR_RandomLR:
             {
-                Javit_InitializeLR(p1, iPartner, view_as<LRTypes>(GetRandomInt(2, sizeof(gS_LRNames) - 1)), true);
+                LRTypes iRandomLR = view_as<LRTypes>(GetRandomInt(2, sizeof(gS_LRNames) - 1));
 
-                gLR_Weapon[p1] = -2;
+                switch(iRandomLR)
+                {
+                    case LR_Freeday:
+                    {
+                        if(LibraryExists("jbaddons"))
+                        {
+                            gB_Freeday[p1] = true;
+
+                            ForcePlayerSuicide(p1);
+                            Javit_PlayWowSound();
+
+                            Javit_PrintToChatAll("\x03%N\x01 chose to have a \x05freeday \x04[random]\x01 tomorrow!", p1);
+
+                            return 0;
+                        }
+
+                        else
+                        {
+                            do
+                            {
+                                iRandomLR = view_as<LRTypes>(GetRandomInt(2, sizeof(gS_LRNames) - 1));
+                            }
+
+                            while(iRandomLR == LR_Freeday);
+                        }
+                    }
+
+                    case LR_Molotovs:
+                    {
+                        if(gG_GameEngine != Game_CSGO)
+                        {
+                            do
+                            {
+                                iRandomLR = view_as<LRTypes>(GetRandomInt(2, sizeof(gS_LRNames) - 1));
+                            }
+
+                            while(iRandomLR == LR_Molotovs);
+                        }
+                    }
+
+                    default:
+                    {
+                        gLR_Weapon[p1] = -2;
+                    }
+                }
+
+                Javit_InitializeLR(p1, iPartner, iRandomLR, true);
             }
 
             case LR_RussianRoulette, LR_CircleOfDoom:
@@ -1551,7 +1602,7 @@ public void Javit_StopLR(const char[] message, any ...)
 
     if(gLR_DeagleTossTimer != null)
     {
-        KillTimer(gLR_DeagleTossTimer);
+        delete gLR_DeagleTossTimer;
         gLR_DeagleTossTimer = null;
     }
 }
@@ -1790,10 +1841,10 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 Client_RemoveAllWeapons(gLR_Players[i]);
 
                 int iPistol = GivePlayerItem(gLR_Players[i], sPistol);
-                SetWeaponAmmo(gLR_Players[i], iPistol, 9999, 9999);
+                SetWeaponAmmo(gLR_Players[i], iPistol, 32767, 0);
 
                 int iPrimary = GivePlayerItem(gLR_Players[i], sPrimary);
-                SetWeaponAmmo(gLR_Players[i], iPrimary, 9999, 9999);
+                SetWeaponAmmo(gLR_Players[i], iPrimary, 32767, 0);
             }
 
             Javit_PrintToChatAll("\x04??? \x05%s", sPistolName);
@@ -1838,7 +1889,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 dp.WriteCell(GetClientSerial(gLR_Players[i]));
 
                 int iSniper = GivePlayerItem(gLR_Players[i], sSniper);
-                SetWeaponAmmo(gLR_Players[i], iSniper, 10, 9999);
+                SetWeaponAmmo(gLR_Players[i], iSniper, 10, 32767);
                 dp.WriteCell(iSniper);
 
                 CreateTimer(0.50, Timer_SwitchToWeapon, dp, TIMER_FLAG_NO_MAPCHANGE);
@@ -1885,7 +1936,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 dp.WriteCell(GetClientSerial(gLR_Players[i]));
 
                 int iWeapon = GivePlayerItem(gLR_Players[i], "weapon_p90");
-                SetWeaponAmmo(gLR_Players[i], iWeapon, 9999, 0);
+                SetWeaponAmmo(gLR_Players[i], iWeapon, 32767, 0);
 
                 dp.WriteCell(iWeapon);
 
@@ -1906,7 +1957,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 dp.WriteCell(GetClientSerial(gLR_Players[i]));
 
                 int iWeapon = GivePlayerItem(gLR_Players[i], "weapon_deagle");
-                SetWeaponAmmo(gLR_Players[i], iWeapon, 9999, 0);
+                SetWeaponAmmo(gLR_Players[i], iWeapon, 32767, 0);
 
                 dp.WriteCell(iWeapon);
 
@@ -1939,10 +1990,10 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
 
                 GivePlayerItem(gLR_Players[i], "weapon_knife");
                 int iPistol = GivePlayerItem(gLR_Players[i], sPistol);
-                SetWeaponAmmo(gLR_Players[i], iPistol, 9999, 9999);
+                SetWeaponAmmo(gLR_Players[i], iPistol, 32767, 32767);
 
                 int iRifle = GivePlayerItem(gLR_Players[i], sRifle);
-                SetWeaponAmmo(gLR_Players[i], iRifle, 9999, 9999);
+                SetWeaponAmmo(gLR_Players[i], iRifle, 32767, 32767);
             }
         }
 
@@ -1997,7 +2048,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
 
         case LR_DRHax:
         {
-            EmitSoundToAllAny("javit/lr_hax.mp3", SOUND_FROM_PLAYER, SNDCHAN_STATIC, SNDLEVEL_NORMAL);
+            EmitSoundToAllAny("javit/lr_hax.mp3", SOUND_FROM_PLAYER, SNDCHAN_STATIC, 40);
 
             Javit_PrintToChatAll("HAXXXXXXXXXXXXX");
 
@@ -2048,7 +2099,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 GivePlayerItem(gLR_Players[i], "weapon_knife");
 
                 int iXM1014 = GivePlayerItem(gLR_Players[i], "weapon_xm1014");
-                SetWeaponAmmo(gLR_Players[i], iXM1014, 9999, 0);
+                SetWeaponAmmo(gLR_Players[i], iXM1014, 32767, 0);
                 EquipPlayerWeapon(gLR_Players[i], iXM1014);
             }
         }
@@ -2488,16 +2539,7 @@ public bool ShootFlame(int client, int target, float distance)
         FormatEx(sColor, 16, "41 206 214");
     }
 
-    char[] sTarget = new char[32];
-    Format(sTarget, 32, "target%d", client);
-    DispatchKeyValue(client, "targetname", sTarget);
-
-    char[] sFlameName = new char[32];
-    FormatEx(sFlameName, 32, "flame%d", client);
-
     int iFlameEnt = CreateEntityByName("env_steam");
-    DispatchKeyValue(iFlameEnt, "targetname", sFlameName);
-    DispatchKeyValue(iFlameEnt, "parentname", sTarget);
     DispatchKeyValue(iFlameEnt, "SpawnFlags", "1");
     DispatchKeyValue(iFlameEnt, "Type", "0");
     DispatchKeyValue(iFlameEnt, "InitialState", "1");
@@ -2510,23 +2552,15 @@ public bool ShootFlame(int client, int target, float distance)
     DispatchKeyValue(iFlameEnt, "RenderColor", sColor);
     DispatchKeyValue(iFlameEnt, "RenderAmt", "180");
     DispatchSpawn(iFlameEnt);
+    SetEntPropEnt(iFlameEnt, Prop_Send, "m_hOwnerEntity", client);
     TeleportEntity(iFlameEnt, fClientOrigin, fEyeAngles, NULL_VECTOR);
-    /*SetVariantString(sTarget);
-    AcceptEntityInput(iFlameEnt, "SetParent", iFlameEnt, iFlameEnt, 0);
-    SetVariantString("forward");
-    AcceptEntityInput(iFlameEnt, "SetParentAttachment", iFlameEnt, iFlameEnt, 0);*/
-    SetVariantString(sTarget);
-    AcceptEntityInput(iFlameEnt, "SetParent", client, client, 0);
-    AcceptEntityInput(iFlameEnt, "SetParentAttachment", client, client, 0);
-
     AcceptEntityInput(iFlameEnt, "TurnOn");
-
-    char[] sFlame2Name = new char[32];
-    FormatEx(sFlame2Name, 32, "flame2%d", client);
+    SetVariantString("!activator");
+    AcceptEntityInput(iFlameEnt, "SetParent", client, iFlameEnt, 0);
+    SetVariantString("forward");
+    AcceptEntityInput(iFlameEnt, "SetParentAttachmentMaintainOffset", iFlameEnt, iFlameEnt, 0);
 
     int iFlameEnt2 = CreateEntityByName("env_steam");
-    DispatchKeyValue(iFlameEnt2, "targetname", sFlame2Name);
-    DispatchKeyValue(iFlameEnt2, "parentname", sTarget);
     DispatchKeyValue(iFlameEnt2, "SpawnFlags", "1");
     DispatchKeyValue(iFlameEnt2, "Type", "1");
     DispatchKeyValue(iFlameEnt2, "InitialState", "1");
@@ -2537,16 +2571,13 @@ public bool ShootFlame(int client, int target, float distance)
     DispatchKeyValue(iFlameEnt2, "Rate", "10");
     DispatchKeyValue(iFlameEnt2, "JetLength", "500");
     DispatchSpawn(iFlameEnt2);
+    SetEntPropEnt(iFlameEnt2, Prop_Send, "m_hOwnerEntity", client);
     TeleportEntity(iFlameEnt2, fClientOrigin, fEyeAngles, NULL_VECTOR);
-    /*SetVariantString(sTarget);
-    AcceptEntityInput(iFlameEnt2, "SetParent", iFlameEnt2, iFlameEnt2, 0);
-    SetVariantString("forward");
-    AcceptEntityInput(iFlameEnt2, "SetParentAttachment", iFlameEnt2, iFlameEnt2, 0);*/
-
-    AcceptEntityInput(iFlameEnt2, "SetParent", iFlameEnt, iFlameEnt, 0);
-    AcceptEntityInput(iFlameEnt2, "SetParentAttachment", iFlameEnt, iFlameEnt, 0);
-
     AcceptEntityInput(iFlameEnt2, "TurnOn");
+    SetVariantString("!activator");
+    AcceptEntityInput(iFlameEnt2, "SetParent", client, iFlameEnt2, 0);
+    SetVariantString("forward");
+    AcceptEntityInput(iFlameEnt2, "SetParentAttachmentMaintainOffset", iFlameEnt2, iFlameEnt2, 0);
 
     DataPack dp = new DataPack();
     dp.WriteCell(EntIndexToEntRef(iFlameEnt));
@@ -2718,7 +2749,7 @@ public void Explode(int entity, int target)
 
         int iExplosion = CreateEntityByName("env_explosion");
         DispatchKeyValueVector(iExplosion, "Origin", fEntityPosition);
-        DispatchKeyValue(iExplosion, "iMagnitude", "60");
+        DispatchKeyValue(iExplosion, "iMagnitude", "100");
         DispatchKeyValue(iExplosion, "classname", "HAX");
         DispatchSpawn(iExplosion);
         SetEntPropEnt(iExplosion, Prop_Data, "m_hInflictor", client);
