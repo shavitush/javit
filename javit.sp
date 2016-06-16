@@ -597,26 +597,14 @@ public void Player_Spawn(Event e, const char[] name, bool dB)
     int userid = e.GetInt("userid");
     int client = GetClientOfUserId(userid);
 
-    if(!IsValidClient(client, true))
+    if(!IsValidClient(client, true) || GetClientTeam(client) < 2)
     {
         return;
     }
 
     gLR_Weapon[client] = -1;
 
-    CreateTimer(0.01, Timer_Equip, GetClientSerial(client));
-}
-
-public Action Timer_Equip(Handle Timer, any data)
-{
-    int client = GetClientFromSerial(data);
-
-    if(client == 0)
-    {
-        return Plugin_Stop;
-    }
-
-    Client_RemoveAllWeapons(client);
+    DisarmPlayer(client);
 
     SetEntityHealth(client, 100);
     SetEntityGravity(client, 1.0);
@@ -635,8 +623,6 @@ public Action Timer_Equip(Handle Timer, any data)
     }
 
     SetEntProp(client, Prop_Data, "m_CollisionGroup", 2);
-
-    return Plugin_Stop;
 }
 
 public void Player_Death(Event e, const char[] name, bool dB)
@@ -702,15 +688,13 @@ public void Player_Jump(Event e, const char[] name, bool dB)
 
 public void Weapon_Fire(Event e, const char[] name, bool dB)
 {
-    /*if(gLR_Current == LR_None)
+    if(gLR_Current == LR_None)
     {
         return;
-    }*/
+    }
 
     int userid = e.GetInt("userid");
     int client = GetClientOfUserId(userid);
-
-    ShootFlame(client, client, 280.00);
 
     if(!IsValidClient(client, true) || (client != gLR_Players[LR_Prisoner] && client != gLR_Players[LR_Guard]))
     {
@@ -1596,6 +1580,9 @@ public void Javit_StopLR(const char[] message, any ...)
             gLR_DroppedDeagle[gLR_Players[i]] = false;
         }
 
+        strcopy(gSLR_SecondaryWeapons[i], 32, "");
+        strcopy(gSLR_PrimaryWeapons[i], 32, "");
+
         gLR_DeaglePositionMeasured[i] = false;
         gLR_Players[i] = 0;
     }
@@ -1716,11 +1703,21 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
             GetEntityClassname(iSecondary, gSLR_SecondaryWeapons[i], 32);
         }
 
+        else
+        {
+            strcopy(gSLR_SecondaryWeapons[i], 32, "");
+        }
+
         int iPrimary = GetPlayerWeaponSlot(gLR_Players[i], CS_SLOT_PRIMARY);
 
         if(iPrimary != -1)
         {
             GetEntityClassname(iPrimary, gSLR_PrimaryWeapons[i], 32);
+        }
+
+        else
+        {
+            strcopy(gSLR_PrimaryWeapons[i], 32, "");
         }
 
         gILR_HealthValues[i] = GetClientHealth(gLR_Players[i]);
@@ -2557,7 +2554,7 @@ public bool ShootFlame(int client, int target, float distance)
     AcceptEntityInput(iFlameEnt, "TurnOn");
     SetVariantString("!activator");
     AcceptEntityInput(iFlameEnt, "SetParent", client, iFlameEnt, 0);
-    SetVariantString("forward");
+    SetVariantString(gG_GameEngine == Game_CSGO? "facemask":"forward");
     AcceptEntityInput(iFlameEnt, "SetParentAttachmentMaintainOffset", iFlameEnt, iFlameEnt, 0);
 
     int iFlameEnt2 = CreateEntityByName("env_steam");
@@ -2576,7 +2573,7 @@ public bool ShootFlame(int client, int target, float distance)
     AcceptEntityInput(iFlameEnt2, "TurnOn");
     SetVariantString("!activator");
     AcceptEntityInput(iFlameEnt2, "SetParent", client, iFlameEnt2, 0);
-    SetVariantString("forward");
+    SetVariantString(gG_GameEngine == Game_CSGO? "facemask":"forward");
     AcceptEntityInput(iFlameEnt2, "SetParentAttachmentMaintainOffset", iFlameEnt2, iFlameEnt2, 0);
 
     DataPack dp = new DataPack();
@@ -2785,13 +2782,14 @@ stock void SetWeaponAmmo(int client, int weapon, int first = -1, int second = -1
 
 public void DisarmPlayer(int client)
 {
-    for(int i = 0; i < 3; i++)
+    for(int i = 0; i < 4; i++)
     {
-        int weapon = GetPlayerWeaponSlot(client, i);
+        int iWeapon = GetPlayerWeaponSlot(client, i);
 
-        if(weapon != -1 && RemovePlayerItem(client, weapon))
+        if(iWeapon != -1)
         {
-            AcceptEntityInput(weapon, "Kill");
+            RemovePlayerItem(client, iWeapon);
+            AcceptEntityInput(iWeapon, "Kill");
         }
     }
 }
