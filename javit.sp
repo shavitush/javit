@@ -659,8 +659,6 @@ public void Player_Jump(Event e, const char[] name, bool dB)
     int userid = e.GetInt("userid");
     int client = GetClientOfUserId(userid);
 
-    GetClientAbsOrigin(client, gLR_PreJumpPosition[client]);
-
     if(!IsValidClient(client, true))
     {
         return;
@@ -1446,6 +1444,11 @@ public Action Timer_Beacon(Handle Timer)
             if(IsValidClient(gLR_Players[i], true))
             {
                 Javit_BeaconEntity(gLR_Players[i]);
+
+                if(gLR_Current == LR_Dodgeball)
+                {
+                    SetEntityHealth(gLR_Players[i], 1);
+                }
             }
         }
     }
@@ -1463,7 +1466,7 @@ public Action Timer_Beacon(Handle Timer)
 
                 gLR_CirclePosition[2] += 20.0;
 
-                TE_SetupBeamRingPoint(gLR_CirclePosition, 299.90, 300.0, gI_BeamSprite, gI_HaloSprite, 0, 60, 0.6, 5.0, 0.00, color, 10, 0);
+                TE_SetupBeamRingPoint(gLR_CirclePosition, 239.90, 240.0, gI_BeamSprite, gI_HaloSprite, 0, 60, 0.6, 5.0, 0.00, color, 10, 0);
                 TE_SendToAll();
             }
 
@@ -1473,12 +1476,12 @@ public Action Timer_Beacon(Handle Timer)
             GetClientAbsOrigin(gLR_Players[LR_Prisoner], fPosition[LR_Prisoner]);
             GetClientAbsOrigin(gLR_Players[LR_Guard], fPosition[LR_Guard]);
 
-            if(GetVectorDistance(fPosition[LR_Prisoner], gLR_CirclePosition) > 150.00)
+            if(GetVectorDistance(fPosition[LR_Prisoner], gLR_CirclePosition) > 120.00)
             {
                 SDKHooks_TakeDamage(gLR_Players[LR_Prisoner], gLR_Players[LR_Guard], gLR_Players[LR_Guard], GetClientHealth(gLR_Players[LR_Prisoner]) * 1.0, CS_DMG_HEADSHOT);
             }
 
-            else if(GetVectorDistance(fPosition[LR_Guard], gLR_CirclePosition) > 150.00)
+            else if(GetVectorDistance(fPosition[LR_Guard], gLR_CirclePosition) > 120.00)
             {
                 SDKHooks_TakeDamage(gLR_Players[LR_Guard], gLR_Players[LR_Prisoner], gLR_Players[LR_Prisoner], GetClientHealth(gLR_Players[LR_Guard]) * 1.0, CS_DMG_HEADSHOT);
             }
@@ -1764,7 +1767,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 strcopy(sPistolName, 128, gS_CSGOPistolNames[iWeapon]);
             }
 
-            Javit_PrintToChatAll("Shot4Shot weapon: \x05%s\x01.", sPistolName);
+            Javit_PrintToChatAll("Shot4Shot weapon: \x05%s%s\x01.", sPistolName, (gLR_Weapon[prisoner] == -2)? " \x04[random]":"");
 
             int iFirst = GetRandomInt(0, 1); // "provably fair" :^)
             gLR_Weapon_Turn = iFirst;
@@ -2179,7 +2182,7 @@ public Action Timer_DeagleToss(Handle Timer)
             float fTempPosition[3];
             GetEntPropVector(gLR_Deagles[i], Prop_Send, "m_vecOrigin", fTempPosition);
 
-            if(GetVectorDistance(fTempPosition, gLR_DeaglePosition[i]) < 30.0)
+            if(GetVectorDistance(fTempPosition, gLR_DeaglePosition[i]) < 10.0)
             {
                 gLR_DeaglePositionMeasured[i] = true;
             }
