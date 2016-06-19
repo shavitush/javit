@@ -38,6 +38,7 @@ char gSLR_MonitorModel[PLATFORM_MAX_PATH];
 LRTypes gLR_Current = LR_None;
 LRTypes gLR_ChosenRequest[MAXPLAYERS+1];
 int gLR_Weapon_Turn = 0;
+int gLR_DeagleToss_First = -1;
 
 int gLR_Players[2];
 float gLR_SpecialCooldown[MAXPLAYERS+1];
@@ -64,7 +65,6 @@ int gI_HaloSprite = -1;
 int gI_ExplosionSprite = -1;
 int gI_SmokeSprite = -1;
 
-int gI_Clip1 = -1;
 int gI_Ammo = -1;
 
 ConVar gCV_IgnoreGrenadeRadio = null;
@@ -163,7 +163,6 @@ public void OnPluginStart()
     gH_Forwards_OnLRStart = CreateGlobalForward("Javit_OnLRStart", ET_Event, Param_Cell, Param_Cell, Param_Cell);
     gH_Forwards_OnLRFinish = CreateGlobalForward("Javit_OnLRFinish", ET_Event, Param_Cell, Param_Cell, Param_Cell);
 
-    gI_Clip1 = FindSendPropInfo("CBaseCombatWeapon", "m_iClip1");
     gI_Ammo = FindSendPropInfo("CCSPlayer", "m_iAmmo");
 }
 
@@ -275,6 +274,11 @@ public Action WeaponEquip(int client, int weapon)
 
 public Action OnTakeDamage(int victim, int &attacker, int &inflictor, float &damage, int &damagetype, int &weapon, float damageForce[3], float damagePosition[3])
 {
+    if(attacker == 0)
+    {
+        return Plugin_Continue;
+    }
+
     if(gLR_Current != LR_None)
     {
         int iPartner = GetLRPartner(victim);
@@ -286,7 +290,7 @@ public Action OnTakeDamage(int victim, int &attacker, int &inflictor, float &dam
                 return Plugin_Handled;
             }
 
-            if(attacker == 0 || attacker != iPartner && inflictor != iPartner)
+            if(attacker != iPartner && inflictor != iPartner)
             {
                 return Plugin_Continue;
             }
@@ -1584,6 +1588,8 @@ public void Javit_StopLR(const char[] message, any ...)
         gLR_Players[i] = 0;
     }
 
+    gLR_DeagleToss_First = -1;
+
     if(gLR_DeagleTossTimer != null)
     {
         delete gLR_DeagleTossTimer;
@@ -1774,7 +1780,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
 
             Javit_PrintToChatAll("The first to shoot is \x03%N\x01!", gLR_Players[iFirst]);
 
-            if(GetRandomInt(1, 4) == 4)
+            if(GetRandomInt(1, 14) == 14)
             {
                 Javit_PrintToChatAll("\x05~MAG4MAG HYPE~");
 
@@ -1848,9 +1854,9 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
 
             Javit_PrintToChatAll("\x04??? \x05%s", sPistolName);
             Javit_PrintToChatAll("\x04??? \x05%s", sPrimaryName);
-            Javit_PrintToChatAll("\x04??? \x05%d", iHP);
-            Javit_PrintToChatAll("\x04??? \x05%.02f", fSpeed);
-            Javit_PrintToChatAll("\x04??? \x05%.02f", fGravity);
+            Javit_PrintToChatAll("\x04??? \x05%d h", iHP);
+            Javit_PrintToChatAll("\x04??? \x05%.02f s", fSpeed);
+            Javit_PrintToChatAll("\x04??? \x05%.02f g", fGravity);
         }
 
         case LR_NoScopeBattle:
@@ -2205,8 +2211,13 @@ public Action Timer_DeagleToss(Handle Timer)
                     color[2] = 255;
                 }
 
-                TE_SetupBeamPoints(gLR_DeaglePosition[i], gLR_PreJumpPosition[gLR_Players[i]], gI_BeamSprite, gI_HaloSprite, 0, 0, 7.50, 5.0, 5.0, 0, 0.0, color, 0);
+                TE_SetupBeamPoints(gLR_DeaglePosition[i], gLR_DeagleToss_First == -1? gLR_PreJumpPosition[gLR_Players[i]]:gLR_PreJumpPosition[gLR_Players[gLR_DeagleToss_First]], gI_BeamSprite, gI_HaloSprite, 0, 0, 10.0, 7.5, 5.0, 0, 0.0, color, 0);
                 TE_SendToAll(0.0);
+
+                if(gLR_DeagleToss_First == -1)
+                {
+                    gLR_DeagleToss_First = i;
+                }
             }
         }
     }
@@ -2244,7 +2255,7 @@ public Action Timer_KillTheLoser(Handle Timer, any data)
 
     for(int i = 0; i < sizeof(gLR_Players); i++)
     {
-        fDistances[i] = GetVectorDistance(gLR_DeaglePosition[i], gLR_PreJumpPosition[gLR_Players[i]]);
+        fDistances[i] = GetVectorDistance(gLR_DeaglePosition[i], gLR_PreJumpPosition[gLR_Players[gLR_DeagleToss_First]]);
     }
 
     Javit_PrintToChatAll("\x04Prisoner: [\x03%N\x04] - \x05%.02f", gLR_Players[LR_Prisoner], fDistances[LR_Prisoner]);
@@ -2766,18 +2777,15 @@ stock void SetWeaponAmmo(int client, int weapon, int first = -1, int second = -1
 {
     if(first != -1)
     {
-        SetEntData(weapon, gI_Clip1, first);
+        SetEntProp(weapon, Prop_Send, "m_iClip1", first);
     }
 
     if(second != -1)
     {
-        if(gG_GameEngine == Game_CSS)
-        {
-            int iAmmo = GetEntProp(weapon, Prop_Send, "m_iPrimaryAmmoType");
-            SetEntData(client, gI_Ammo + (iAmmo * 4), second, 4, true);
-        }
+        int iAmmo = GetEntProp(weapon, Prop_Send, "m_iPrimaryAmmoType");
+        SetEntData(client, gI_Ammo + (iAmmo * 4), second, 4, true);
 
-        else
+        if(gG_GameEngine == Game_CSGO)
         {
             SetEntProp(weapon, Prop_Send, "m_iPrimaryReserveAmmoCount", second);
         }
