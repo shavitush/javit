@@ -290,7 +290,7 @@ forward void Javit_OnLRAvailable();
 native LRTypes Javit_GetClientLR(int client);
 
 /**
- * Gets the current LR the player is in right now.
+ * Convert LR type to name.
  *
  * @param lr        LR type
  * @param buffer    String buffer

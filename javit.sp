@@ -279,21 +279,16 @@ public Action OnTakeDamage(int victim, int &attacker, int &inflictor, float &dam
     {
         int iPartner = GetLRPartner(victim);
 
-        if(iPartner != inflictor && (Javit_GetClientLR(attacker) == LR_None && Javit_GetClientLR(victim) != LR_None) || (Javit_GetClientLR(attacker) != LR_None && Javit_GetClientLR(victim) == LR_None))
-        {
-            return Plugin_Handled;
-        }
-
         if(damagetype != DMG_BURN)
         {
+            if((gLR_Current == LR_NadeFight && attacker == victim) || (iPartner != inflictor && (Javit_GetClientLR(attacker) == LR_None && Javit_GetClientLR(victim) != LR_None) || (Javit_GetClientLR(attacker) != LR_None && Javit_GetClientLR(victim) == LR_None)))
+            {
+                return Plugin_Handled;
+            }
+
             if(attacker == 0 || attacker != iPartner && inflictor != iPartner)
             {
                 return Plugin_Continue;
-            }
-
-            else if(gLR_Current == LR_NadeFight && attacker == victim)
-            {
-                return Plugin_Handled;
             }
         }
 
@@ -609,8 +604,7 @@ public void Player_Spawn(Event e, const char[] name, bool dB)
     SetEntityHealth(client, 100);
     SetEntityGravity(client, 1.0);
 
-    int iWeapon = GivePlayerItem(client, "weapon_knife");
-    EquipPlayerWeapon(client, iWeapon);
+    GivePlayerItem(client, "weapon_knife");
 
     if(GetClientTeam(client) == CS_TEAM_CT)
     {
@@ -649,7 +643,7 @@ public void Player_Death(Event e, const char[] name, bool dB)
         Javit_FinishLR(GetLRPartner(victim), victim, gLR_Current);
     }
 
-    if(Javit_IsItLRTime())
+    if(Javit_IsItLRTime() && !gB_RebelRound)
     {
         Javit_AnnounceLR();
     }
@@ -1079,7 +1073,7 @@ public int MenuHandler_LastRequestCT(Menu m, MenuAction a, int p1, int p2)
 {
     if(a == MenuAction_Select)
     {
-        if(!IsValidClient(p1, true) || GetClientTeam(p1) != CS_TEAM_T || !Javit_IsItLRTime())
+        if(!IsValidClient(p1, true) || GetClientTeam(p1) != CS_TEAM_T || !Javit_IsItLRTime() || gB_RebelRound)
         {
             return 0;
         }
@@ -1638,6 +1632,11 @@ public void Javit_BeaconEntity(int entity)
 
 public void Javit_AnnounceLR()
 {
+    if(gB_RebelRound)
+    {
+        return;
+    }
+
     int iLRPlayer = 0;
 
     for(int i = 1; i <= MaxClients; i++)
@@ -2353,7 +2352,7 @@ public void Javit_FinishLR(int winner, int loser, LRTypes type)
 
 public Action Javit_ShowLRMenu(int client)
 {
-    if(!IsValidClient(client, true) || GetClientTeam(client) != CS_TEAM_T)
+    if(!IsValidClient(client, true) || GetClientTeam(client) != CS_TEAM_T || gB_RebelRound)
     {
         return Plugin_Handled;
     }
@@ -2404,14 +2403,16 @@ public void Javit_PlayWowSound()
 
 public Action OnPlayerRunCmd(int client, int &buttons)
 {
+    if(gLR_Current == LR_None || (client != gLR_Players[LR_Prisoner] && client != gLR_Players[LR_Guard]))
+    {
+        return Plugin_Continue;
+    }
+
     switch(gLR_Current)
     {
         case LR_NoScopeBattle:
         {
-            if(client == gLR_Players[LR_Prisoner] || client == gLR_Players[LR_Guard])
-            {
-                buttons &= ~IN_ATTACK2;
-            }
+            buttons &= ~IN_ATTACK2;
         }
 
         case LR_DeagleToss:
