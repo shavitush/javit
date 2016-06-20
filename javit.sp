@@ -51,7 +51,6 @@ Handle gLR_DeagleTossTimer = null;
 float gLR_DeaglePosition[2][3];
 bool gLR_DeaglePositionMeasured[2];
 bool gLR_DroppedDeagle[MAXPLAYERS+1];
-bool gLR_OnGround[MAXPLAYERS+1];
 float gLR_CirclePosition[3];
 int gLR_Weapon[MAXPLAYERS+1];
 int gLR_TemporaryPartner[MAXPLAYERS+1];
@@ -133,7 +132,6 @@ public void OnPluginStart()
 
     HookEvent("player_spawn", Player_Spawn);
     HookEvent("player_death", Player_Death);
-    HookEvent("player_jump", Player_Jump);
     HookEvent("weapon_fire", Weapon_Fire);
 
     HookEvent("round_start", Round_Start);
@@ -274,9 +272,14 @@ public Action WeaponEquip(int client, int weapon)
 
 public Action OnTakeDamage(int victim, int &attacker, int &inflictor, float &damage, int &damagetype, int &weapon, float damageForce[3], float damagePosition[3])
 {
-    if(attacker == 0)
+    if(attacker == 0 || !IsValidClient(attacker))
     {
         return Plugin_Continue;
+    }
+
+    else if(IsPlayerAlive(attacker) && GetClientTeam(attacker) != GetClientTeam(victim))
+    {
+        PrintHintText(attacker, "-%d HP", RoundToFloor(damage));
     }
 
     if(gLR_Current != LR_None)
@@ -653,35 +656,6 @@ public void Player_Death(Event e, const char[] name, bool dB)
     }
 }
 
-public void Player_Jump(Event e, const char[] name, bool dB)
-{
-    if(gLR_Current == LR_None)
-    {
-        return;
-    }
-
-    int userid = e.GetInt("userid");
-    int client = GetClientOfUserId(userid);
-
-    if(!IsValidClient(client, true))
-    {
-        return;
-    }
-
-    switch(gLR_Current)
-    {
-        case LR_DeagleToss:
-        {
-            if(!gLR_DroppedDeagle[client])
-            {
-                GetClientAbsOrigin(client, gLR_PreJumpPosition[client]);
-
-                gLR_OnGround[client] = false;
-            }
-        }
-    }
-}
-
 public void Weapon_Fire(Event e, const char[] name, bool dB)
 {
     if(gLR_Current == LR_None)
@@ -866,13 +840,6 @@ public Action CS_OnCSWeaponDrop(int client, int weapon)
                 if(gLR_DroppedDeagle[client])
                 {
                     Javit_PrintToChat(client, "You have already tossed this deagle.");
-
-                    return Plugin_Handled;
-                }
-
-                if(gLR_OnGround[client])
-                {
-                    Javit_PrintToChat(client, "You may not drop the gun unless you jump.");
 
                     return Plugin_Handled;
                 }
@@ -2431,9 +2398,9 @@ public Action OnPlayerRunCmd(int client, int &buttons)
 
         case LR_DeagleToss:
         {
-            if(GetEntityFlags(client) & FL_ONGROUND)
+            if(GetEntityFlags(client) & FL_ONGROUND && !gLR_DroppedDeagle[client])
             {
-                gLR_OnGround[client] = true;
+                GetClientAbsOrigin(client, gLR_PreJumpPosition[client]);
             }
         }
     }
@@ -2837,5 +2804,5 @@ public int Native_GetClientPartner(Handle plugin, int numParams)
 
 stock bool IsValidClient(int client, bool bAlive = false)
 {
-    return (client > 0 && IsClientConnected(client) && IsClientInGame(client) && (!bAlive || IsPlayerAlive(client)));
+    return (client > 0 && client <= MaxClients && IsClientConnected(client) && IsClientInGame(client) && (!bAlive || IsPlayerAlive(client)));
 }
