@@ -1,5 +1,16 @@
 # shavit's jailbreak
 
+credits
+__
+evadog for flamethrower  
+entcontrol for missiles
+
+- [ ] team managements
+    - [ ] votect (+api)
+    - [ ] rewrite jbaddons and make votects dynamic
+	- [ ] rewrite freekillers
+
+
 - [x] basic LRs
     - [x] colored beacons
     - [x] beacon sounds
@@ -11,6 +22,7 @@
 - [x] advanced LRs
     - [x] save pre-lr weapons and give them to the winner
     - [x] abort on disconnect
+    - [x] advanced guntoss modes
 
 
 - [x] sounds
@@ -25,6 +37,7 @@
     - [x] shot4shot - tested in CS:S and working
     - [x] random - 500-2500hp, random weapon depending on game, 0.5x-1.5x speed, 0.75x-1.25x gravity
     - [x] noscope battle (random weapon, depending on game)
+        - [ ] shot4shot mode for noscope battle
     - [x] grenade fight
     - [x] backstabs
     - [x] pro90
@@ -59,3 +72,4 @@
     - [x] void Javit_OnLRAvailable()
     - [x] bool Javit_OnLRStart(LRTypes type, int prisoner, int guard) - return false to not allow the lr to start
     - [x] void Javit_OnLRFinish(LRTypes type, int winner, int loser)
+    - [ ] add custom LRs API with dynamic(?)

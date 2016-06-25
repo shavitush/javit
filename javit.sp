@@ -19,7 +19,7 @@
 
 #pragma semicolon 1
 
-#define PLUGIN_VERSION "1.2b"
+#define PLUGIN_VERSION "1.5b"
 
 // #define DEBUG
 
@@ -39,11 +39,14 @@ LRTypes gLR_Current = LR_None;
 LRTypes gLR_ChosenRequest[MAXPLAYERS+1];
 int gLR_Weapon_Turn = 0;
 int gLR_DeagleToss_First = -1;
+int gLR_DeagleTossWinner = 0;
 
 int gLR_Players[2];
 float gLR_SpecialCooldown[MAXPLAYERS+1];
 
 int gLR_S4SMode = 0; // 1 is mag4mag
+int gLR_DeagleTossMode = 0; // 0 - furthest, 1 - closest
+bool gLR_DeagleTossAllowEquips = true;
 
 float gLR_PreJumpPosition[MAXPLAYERS+1][3];
 int gLR_Deagles[2];
@@ -65,6 +68,7 @@ int gI_ExplosionSprite = -1;
 int gI_SmokeSprite = -1;
 
 int gI_Ammo = -1;
+int gI_NextSecondaryAttack = -1;
 
 ConVar gCV_IgnoreGrenadeRadio = null;
 
@@ -74,9 +78,9 @@ Handle gH_Forwards_OnLRFinish = null;
 
 public Plugin myinfo =
 {
-    name = "Javit",
+    name = "Javit - Last Requests",
     author = "shavit",
-    description = "Lastrequest handler for CS:S/CS:GO Jailbreak servers.",
+    description = "Last Requests handler for CS:S/CS:GO Jailbreak servers.",
     version = PLUGIN_VERSION,
     url = "https://github.com/shavitush/"
 };
@@ -162,6 +166,7 @@ public void OnPluginStart()
     gH_Forwards_OnLRFinish = CreateGlobalForward("Javit_OnLRFinish", ET_Event, Param_Cell, Param_Cell, Param_Cell);
 
     gI_Ammo = FindSendPropInfo("CCSPlayer", "m_iAmmo");
+    gI_NextSecondaryAttack = FindSendPropInfo("CBaseCombatWeapon", "m_flNextSecondaryAttack");
 }
 
 public void OnClientPutInServer(int client)
@@ -172,7 +177,8 @@ public void OnClientPutInServer(int client)
     gB_Freeday[client] = false;
 
     SDKHook(client, SDKHook_OnTakeDamage, OnTakeDamage);
-    SDKHook(client, SDKHook_WeaponCanUse, WeaponEquip);
+    SDKHook(client, SDKHook_WeaponCanUse, WeaponCanUse);
+    SDKHook(client, SDKHook_PreThink, PreThink);
 
     if(gH_SQL != null)
     {
@@ -198,7 +204,7 @@ public void SQL_InsertUser_Callback(Database db, DBResultSet results, const char
 	{
         int client = GetClientFromSerial(data);
 
-        if(!client)
+        if(client == 0)
         {
             LogError("Javit error! Failed to insert a disconnected player's data to the table. Reason: %s", error);
         }
@@ -214,31 +220,28 @@ public void SQL_InsertUser_Callback(Database db, DBResultSet results, const char
 
 public void SQL_DBConnect()
 {
-	if(gH_SQL != null)
-	{
-		CloseHandle(gH_SQL);
-	}
+    if(gH_SQL != null)
+    {
+        delete gH_SQL;
+    }
 
-	if(SQL_CheckConfig("javit"))
-	{
-		char[] sError = new char[255];
+    if(SQL_CheckConfig("javit"))
+    {
+        char[] sError = new char[255];
 
-		if(!(gH_SQL = SQL_Connect("javit", true, sError, 255)))
-		{
-			SetFailState("Javit startup failed. Reason: %s", sError);
-		}
+        if(!(gH_SQL = SQL_Connect("javit", true, sError, 255)))
+        {
+            SetFailState("Javit startup failed. Reason: %s", sError);
+        }
 
-		SQL_LockDatabase(gH_SQL);
-		SQL_FastQuery(gH_SQL, "SET NAMES 'utf8';");
-		SQL_UnlockDatabase(gH_SQL);
+        gH_SQL.SetCharset("utf8");
+        gH_SQL.Query(SQL_CreateTable_Callback, "CREATE TABLE IF NOT EXISTS `players` (`auth` VARCHAR(32) NOT NULL, `name` VARCHAR(32) NOT NULL DEFAULT '< blank >', `wins` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`auth`));", 0, DBPrio_High);
+    }
 
-		gH_SQL.Query(SQL_CreateTable_Callback, "CREATE TABLE IF NOT EXISTS `players` (`auth` VARCHAR(32) NOT NULL, `name` VARCHAR(32) NOT NULL DEFAULT '< blank >', `wins` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`auth`));", 0, DBPrio_High);
-	}
-
-	else
-	{
-		SetFailState("Javit startup failed. Reason: %s", "\"javit\" is not a specified entry in databases.cfg.");
-	}
+    else
+    {
+        SetFailState("Javit startup failed. Reason: %s", "\"javit\" is not a specified entry in databases.cfg.");
+    }
 }
 
 public void SQL_CreateTable_Callback(Database db, DBResultSet results, const char[] error, any data)
@@ -251,7 +254,7 @@ public void SQL_CreateTable_Callback(Database db, DBResultSet results, const cha
 	}
 }
 
-public Action WeaponEquip(int client, int weapon)
+public Action WeaponCanUse(int client, int weapon)
 {
     if(gLR_Current != LR_None && (client == gLR_Players[LR_Prisoner] || client == gLR_Players[LR_Guard]))
     {
@@ -259,7 +262,7 @@ public Action WeaponEquip(int client, int weapon)
         {
             case LR_DeagleToss:
             {
-                if(gLR_DroppedDeagle[client] && (weapon == gLR_Deagles[LR_Prisoner] || weapon == gLR_Deagles[LR_Guard]))
+                if(!gLR_DeagleTossAllowEquips && gLR_DroppedDeagle[client] && (weapon == gLR_Deagles[LR_Prisoner] || weapon == gLR_Deagles[LR_Guard]))
                 {
                     return Plugin_Handled;
                 }
@@ -268,6 +271,21 @@ public Action WeaponEquip(int client, int weapon)
     }
 
     return Plugin_Continue;
+}
+
+public void PreThink(int client)
+{
+    if(gLR_Current != LR_NoScopeBattle || (client != gLR_Players[LR_Prisoner] && client != gLR_Players[LR_Guard]))
+    {
+        return;
+    }
+
+    int iWeapon = GetEntPropEnt(client, Prop_Data, "m_hActiveWeapon");
+
+    if(iWeapon != -1 && IsValidEntity(iWeapon))
+    {
+        SetEntDataFloat(iWeapon, gI_NextSecondaryAttack, GetGameTime() + 1.0);
+    }
 }
 
 public Action OnTakeDamage(int victim, int &attacker, int &inflictor, float &damage, int &damagetype, int &weapon, float damageForce[3], float damagePosition[3])
@@ -493,6 +511,11 @@ public Action OnTakeDamage(int victim, int &attacker, int &inflictor, float &dam
 
             case LR_DeagleToss:
             {
+                if(gLR_DeagleTossAllowEquips)
+                {
+                    return Plugin_Continue;
+                }
+
                 return Plugin_Handled;
             }
 
@@ -770,6 +793,22 @@ public void Weapon_Fire(Event e, const char[] name, bool dB)
         {
             if(StrContains(sWeapon, "xm1014") != -1)
             {
+                int iWeapon = GetPlayerWeaponSlot(client, CS_SLOT_PRIMARY);
+
+                if(iWeapon != -1)
+                {
+                    SetWeaponAmmo(client, iWeapon, 255, 0);
+                }
+
+                else
+                {
+                    Javit_StopLR("LR aborted - couldn't find XM1014 on \x03%N\x01.", client);
+
+                    Javit_PlayMissSound();
+
+                    return;
+                }
+
                 int color[4] = {0, 0, 0, 255};
 
                 for(int i = 0; i < 3; i++)
@@ -816,6 +855,36 @@ public void Weapon_Fire(Event e, const char[] name, bool dB)
                 CreateTimer(0.40, AutoSwitchTimer, dp);
             }
         }
+
+        case LR_Randomization, LR_Pro90, LR_Headshots, LR_Jumpshots, LR_DeagleToss:
+        {
+            if(gLR_Current != LR_DeagleToss || (gLR_DeagleTossAllowEquips && client == gLR_DeagleTossWinner))
+            {
+                int iWeapon = GetEntPropEnt(client, Prop_Data, "m_hActiveWeapon");
+
+                if(iWeapon != -1)
+                {
+                    SetWeaponAmmo(client, iWeapon, 255, 0);
+                }
+            }
+        }
+
+        case LR_NoScopeBattle:
+        {
+            int iWeapon = GetPlayerWeaponSlot(client, CS_SLOT_PRIMARY);
+
+            if(iWeapon != -1)
+            {
+                SetWeaponAmmo(client, iWeapon, -1, 1000);
+            }
+
+            else
+            {
+                Javit_StopLR("LR aborted - couldn't find weapon on \x03%N\x01.", client);
+
+                Javit_PlayMissSound();
+            }
+        }
     }
 
     return;
@@ -825,7 +894,7 @@ public Action CS_OnCSWeaponDrop(int client, int weapon)
 {
     switch(gLR_Current)
     {
-        case LR_Shot4Shot, LR_Randomization, LR_RussianRoulette:
+        case LR_Shot4Shot, LR_Randomization, LR_RussianRoulette, LR_ShotgunFight, LR_Headshots, LR_Jumpshots, LR_Pro90, LR_NoScopeBattle:
         {
             if(client == gLR_Players[LR_Prisoner] || client == gLR_Players[LR_Guard])
             {
@@ -864,7 +933,7 @@ public Action AutoSwitchTimer(Handle Timer, any data)
 
     int client = GetClientFromSerial(serial);
 
-    if(!client)
+    if(client == 0)
     {
         return Plugin_Stop;
     }
@@ -997,11 +1066,11 @@ public int MenuHandler_LastRequestType(Menu m, MenuAction a, int p1, int p2)
                 GivePlayerItem(p1, "weapon_knife");
 
                 int iDeagle = GivePlayerItem(p1, "weapon_deagle");
-                SetWeaponAmmo(p1, iDeagle, 32767, 0);
+                SetWeaponAmmo(p1, iDeagle, 255, 0);
                 EquipPlayerWeapon(p1, iDeagle);
 
                 int iMAG = GivePlayerItem(p1, gG_GameEngine == Game_CSGO? "weapon_negev":"weapon_m249");
-                SetWeaponAmmo(p1, iMAG, 32767, 0);
+                SetWeaponAmmo(p1, iMAG, 255, 0);
                 EquipPlayerWeapon(p1, iMAG);
                 SetEntPropEnt(p1, Prop_Data, "m_hActiveWeapon", iMAG);
 
@@ -1224,7 +1293,18 @@ public int MenuHandler_LastRequestCT(Menu m, MenuAction a, int p1, int p2)
                 }
 
                 menu.ExitBackButton = true;
+                menu.Display(p1, 20);
 
+                return 0;
+            }
+
+            case LR_DeagleToss:
+            {
+                Menu menu = new Menu(MenuHandler_DeagleTossMode);
+                menu.SetTitle("Choose Deagle Toss mode");
+                menu.AddItem("0", "Furthest toss (highest distance)");
+                menu.AddItem("1", "Closest toss (lowest distance)");
+                menu.ExitBackButton = true;
                 menu.Display(p1, 20);
 
                 return 0;
@@ -1262,6 +1342,31 @@ public int MenuHandler_Weapons(Menu m, MenuAction a, int p1, int p2)
         gLR_Weapon[p1] = StringToInt(sInfo);
 
         Javit_InitializeLR(p1, gLR_TemporaryPartner[p1], gLR_ChosenRequest[p1], gLR_Weapon[p1] == -2? true:false);
+    }
+
+    else if(a == MenuAction_Cancel && p2 == MenuCancel_ExitBack)
+    {
+        Javit_ShowLRMenu(p1);
+    }
+
+    else if(a == MenuAction_End)
+    {
+        delete m;
+    }
+
+    return 0;
+}
+
+public int MenuHandler_DeagleTossMode(Menu m, MenuAction a, int p1, int p2)
+{
+    if(a == MenuAction_Select)
+    {
+        char[] sInfo = new char[8];
+        m.GetItem(p2, sInfo, 8);
+
+        gLR_DeagleTossMode = StringToInt(sInfo);
+
+        Javit_InitializeLR(p1, gLR_TemporaryPartner[p1], gLR_ChosenRequest[p1], false);
     }
 
     else if(a == MenuAction_Cancel && p2 == MenuCancel_ExitBack)
@@ -1319,7 +1424,7 @@ public void SQL_Top_Callback(Database db, DBResultSet results, const char[] erro
 
 	int client = GetClientFromSerial(data);
 
-	if(!client)
+	if(client == 0)
 	{
 		return;
 	}
@@ -1477,7 +1582,15 @@ public void Javit_PrintToChat(int client, const char[] buffer, any ...)
     char[] sFormatted = new char[256];
     VFormat(sFormatted, 256, buffer, 3);
 
-    PrintToChat(client, "%s\x04[Jailbreak]\x01 %s", gG_GameEngine == Game_CSGO? " ":"", sFormatted);
+    if(client != 0)
+    {
+        PrintToChat(client, "%s\x04[Jailbreak]\x01 %s", (gG_GameEngine == Game_CSGO)? " ":"", sFormatted);
+    }
+
+    else
+    {
+        PrintToServer("[Jailbreak] %s", sFormatted);
+    }
 }
 
 stock void Javit_PrintToChatAll(const char[] format, any ...)
@@ -1496,7 +1609,7 @@ stock void Javit_PrintToChatAll(const char[] format, any ...)
 
 public void Javit_StopLR(const char[] message, any ...)
 {
-    if(!StrEqual(message, "")) // not an empty parameter - print a message
+    if(!StrEqual(message, STOPLR_NOTHING)) // not an empty parameter - print a message
     {
         char[] sFormatted = new char[256];
         VFormat(sFormatted, 256, message, 2);
@@ -1562,6 +1675,10 @@ public void Javit_StopLR(const char[] message, any ...)
         delete gLR_DeagleTossTimer;
         gLR_DeagleTossTimer = null;
     }
+
+    gLR_DeagleTossMode = 0;
+    gLR_DeagleTossAllowEquips = true;
+    gLR_DeagleTossWinner = 0;
 }
 
 public int Javit_GetClientAmount(int team, bool alive)
@@ -1813,10 +1930,10 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 Client_RemoveAllWeapons(gLR_Players[i]);
 
                 int iPistol = GivePlayerItem(gLR_Players[i], sPistol);
-                SetWeaponAmmo(gLR_Players[i], iPistol, 32767, 0);
+                SetWeaponAmmo(gLR_Players[i], iPistol, 255, 0);
 
                 int iPrimary = GivePlayerItem(gLR_Players[i], sPrimary);
-                SetWeaponAmmo(gLR_Players[i], iPrimary, 32767, 0);
+                SetWeaponAmmo(gLR_Players[i], iPrimary, 255, 0);
             }
 
             Javit_PrintToChatAll("\x04??? \x05%s", sPistolName);
@@ -1861,7 +1978,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 dp.WriteCell(GetClientSerial(gLR_Players[i]));
 
                 int iSniper = GivePlayerItem(gLR_Players[i], sSniper);
-                SetWeaponAmmo(gLR_Players[i], iSniper, 10, 32767);
+                SetWeaponAmmo(gLR_Players[i], iSniper, 10, 255);
                 dp.WriteCell(iSniper);
 
                 CreateTimer(0.50, Timer_SwitchToWeapon, dp, TIMER_FLAG_NO_MAPCHANGE);
@@ -1908,7 +2025,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 dp.WriteCell(GetClientSerial(gLR_Players[i]));
 
                 int iWeapon = GivePlayerItem(gLR_Players[i], "weapon_p90");
-                SetWeaponAmmo(gLR_Players[i], iWeapon, 32767, 0);
+                SetWeaponAmmo(gLR_Players[i], iWeapon, 255, 0);
 
                 dp.WriteCell(iWeapon);
 
@@ -1929,7 +2046,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 dp.WriteCell(GetClientSerial(gLR_Players[i]));
 
                 int iWeapon = GivePlayerItem(gLR_Players[i], "weapon_deagle");
-                SetWeaponAmmo(gLR_Players[i], iWeapon, 32767, 0);
+                SetWeaponAmmo(gLR_Players[i], iWeapon, 255, 0);
 
                 dp.WriteCell(iWeapon);
 
@@ -1962,10 +2079,10 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
 
                 GivePlayerItem(gLR_Players[i], "weapon_knife");
                 int iPistol = GivePlayerItem(gLR_Players[i], sPistol);
-                SetWeaponAmmo(gLR_Players[i], iPistol, 32767, 32767);
+                SetWeaponAmmo(gLR_Players[i], iPistol, 255, 255);
 
                 int iRifle = GivePlayerItem(gLR_Players[i], sRifle);
-                SetWeaponAmmo(gLR_Players[i], iRifle, 32767, 32767);
+                SetWeaponAmmo(gLR_Players[i], iRifle, 255, 255);
             }
         }
 
@@ -2037,9 +2154,11 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
 
         case LR_DeagleToss:
         {
+            Javit_PrintToChatAll("Deagle Toss mode: \x04%s\x01 toss.", gLR_DeagleTossMode == 0? "furthest":"closest");
+
             for(int i = 0; i < sizeof(gLR_Players); i++)
             {
-                PrintHintText(gLR_Players[i], "Throw it as far as you can.");
+                PrintHintText(gLR_Players[i], "Throw it as *%s* as you can.", gLR_DeagleTossMode == 0? "FAR":"CLOSE");
 
                 Client_RemoveAllWeapons(gLR_Players[i]);
                 SetEntityHealth(gLR_Players[i], 100);
@@ -2055,13 +2174,15 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
             }
 
             gLR_DeagleTossTimer = CreateTimer(0.5, Timer_DeagleToss, INVALID_HANDLE, TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
+            gLR_DeagleTossAllowEquips = false;
+            gLR_DeagleTossWinner = 0;
         }
 
         case LR_ShotgunFight:
         {
             Javit_PrintToChatAll("pew pew pew.");
 
-            int iHP = GetRandomInt(250, 300);
+            int iHP = GetRandomInt(250, 260);
 
             for(int i = 0; i < sizeof(gLR_Players); i++)
             {
@@ -2071,7 +2192,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
                 GivePlayerItem(gLR_Players[i], "weapon_knife");
 
                 int iXM1014 = GivePlayerItem(gLR_Players[i], "weapon_xm1014");
-                SetWeaponAmmo(gLR_Players[i], iXM1014, 32767, 0);
+                SetWeaponAmmo(gLR_Players[i], iXM1014, 255, 0);
                 EquipPlayerWeapon(gLR_Players[i], iXM1014);
             }
         }
@@ -2145,7 +2266,7 @@ public Action Timer_DeagleToss(Handle Timer)
 
         if(!IsValidEntity(gLR_Deagles[i]))
         {
-            Javit_StopLR("Aborting Deagle Toss! \x03%N\x01's deagle couldn't be found.");
+            Javit_StopLR("Aborting Deagle Toss! \x03%N\x01's deagle couldn't be found.", gLR_Players[i]);
 
             break;
         }
@@ -2199,13 +2320,12 @@ public Action Timer_DeagleToss(Handle Timer)
         else
         {
             CreateTimer(3.0, Timer_KillTheLoser, INVALID_HANDLE, TIMER_FLAG_NO_MAPCHANGE);
-
             Javit_PlayWowSound();
+
+            gLR_DeagleTossTimer = null;
+
+            return Plugin_Stop;
         }
-
-        gLR_DeagleTossTimer = null;
-
-        return Plugin_Stop;
     }
 
     return Plugin_Continue;
@@ -2225,15 +2345,45 @@ public Action Timer_KillTheLoser(Handle Timer, any data)
         fDistances[i] = GetVectorDistance(gLR_DeaglePosition[i], gLR_PreJumpPosition[gLR_Players[gLR_DeagleToss_First]]);
     }
 
-    Javit_PrintToChatAll("\x04Prisoner: [\x03%N\x04] - \x05%.02f", gLR_Players[LR_Prisoner], fDistances[LR_Prisoner]);
-    Javit_PrintToChatAll("\x04Guard: [\x03%N\x04] - \x05%.02f", gLR_Players[LR_Guard], fDistances[LR_Guard]);
+    Javit_PrintToChatAll("\x04[\x03%N\x04] - \x05%.02f", gLR_Players[LR_Prisoner], fDistances[LR_Prisoner]);
+    Javit_PrintToChatAll("\x04[\x03%N\x04] - \x05%.02f", gLR_Players[LR_Guard], fDistances[LR_Guard]);
 
-    int iWinner = gLR_Players[(fDistances[LR_Prisoner] > fDistances[LR_Guard])? LR_Prisoner:LR_Guard];
+    int iWinner = 0;
+
+    if(gLR_DeagleTossMode == 0) // furthest
+    {
+        iWinner = gLR_Players[(fDistances[LR_Prisoner] > fDistances[LR_Guard])? LR_Prisoner:LR_Guard];
+    }
+
+    else
+    {
+        iWinner = gLR_Players[(fDistances[LR_Prisoner] < fDistances[LR_Guard])? LR_Prisoner:LR_Guard];
+    }
+
+    gLR_DeagleTossWinner = iWinner;
+
+    Javit_PrintToChatAll("Winner: \x03%N\x01.", iWinner);
+
     int iPartner = GetLRPartner(iWinner);
 
-    SDKHooks_TakeDamage(iPartner, iWinner, iWinner, GetClientHealth(iPartner) * 1.0, CS_DMG_HEADSHOT);
+    gLR_DeagleTossAllowEquips = true;
 
     Javit_PlayMissSound();
+
+    SetEntityHealth(iWinner, 125);
+    SetEntityHealth(iPartner, 1);
+
+    Client_RemoveAllWeapons(iWinner);
+    Client_RemoveAllWeapons(iPartner);
+
+    GivePlayerItem(iWinner, "weapon_knife");
+    GivePlayerItem(iWinner, "weapon_knife");
+
+    int iPistol = GivePlayerItem(iWinner, "weapon_deagle");
+    SetWeaponAmmo(iWinner, iPistol, 255, 0);
+
+    int iPrimary = GivePlayerItem(iWinner, "weapon_ak47");
+    SetWeaponAmmo(iWinner, iPrimary, 255, 0);
 
     return Plugin_Stop;
 }
@@ -2366,7 +2516,6 @@ public Action Javit_ShowLRMenu(int client)
     }
 
     menu.ExitButton = true;
-
     menu.Display(client, MENU_TIME_FOREVER);
 
     return Plugin_Handled;
@@ -2473,7 +2622,7 @@ public bool IsSafeTeleport(int client, float distance)
         }
     }
 
-    CloseHandle(trace);
+    delete trace;
 
     return !bLookingAtWall;
 }
@@ -2536,7 +2685,7 @@ public bool ShootFlame(int client, int target, float distance)
     AcceptEntityInput(iFlameEnt, "TurnOn");
     SetVariantString("!activator");
     AcceptEntityInput(iFlameEnt, "SetParent", client, iFlameEnt, 0);
-    SetVariantString(gG_GameEngine == Game_CSGO? "facemask":"forward");
+    SetVariantString(gG_GameEngine == Game_CSGO? "primary":"forward");
     AcceptEntityInput(iFlameEnt, "SetParentAttachmentMaintainOffset", iFlameEnt, iFlameEnt, 0);
 
     int iFlameEnt2 = CreateEntityByName("env_steam");
@@ -2555,7 +2704,7 @@ public bool ShootFlame(int client, int target, float distance)
     AcceptEntityInput(iFlameEnt2, "TurnOn");
     SetVariantString("!activator");
     AcceptEntityInput(iFlameEnt2, "SetParent", client, iFlameEnt2, 0);
-    SetVariantString(gG_GameEngine == Game_CSGO? "facemask":"forward");
+    SetVariantString((gG_GameEngine == Game_CSGO)? "primary":"forward");
     AcceptEntityInput(iFlameEnt2, "SetParentAttachmentMaintainOffset", iFlameEnt2, iFlameEnt2, 0);
 
     DataPack dp = new DataPack();
@@ -2775,7 +2924,7 @@ public void DisarmPlayer(int client)
 
 public bool IsKnife(const char[] weapon)
 {
-    return StrContains(weapon, "knife") != -1 || StrContains(weapon, "bayonet") != -1;
+    return (StrContains(weapon, "knife") != -1 || StrContains(weapon, "bayonet") != -1);
 }
 
 public int Native_GetClientLR(Handle plugin, int numParams)
@@ -2792,9 +2941,7 @@ public int Native_GetClientLR(Handle plugin, int numParams)
 
 public int Native_GetLRName(Handle plugin, int numParams)
 {
-    LRTypes lr = view_as<LRTypes>(GetNativeCell(1));
-
-    return SetNativeString(2, gS_LRNames[lr], GetNativeCell(3), true);
+    return SetNativeString(2, gS_LRNames[GetNativeCell(1)], GetNativeCell(3), true);
 }
 
 public int Native_GetClientPartner(Handle plugin, int numParams)
