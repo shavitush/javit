@@ -1,75 +1,81 @@
-# shavit's jailbreak
+# Javit
+### shavit's jailbreak
 
-credits
-__
-evadog for flamethrower  
-entcontrol for missiles
+Credits
+___
 
-- [ ] team managements
-    - [ ] votect (+api)
-    - [ ] rewrite jbaddons and make votects dynamic
-	- [ ] rewrite freekillers
+* evadog for flamethrower.
+* entcontrol for missiles (dr hax).
 
-
-- [x] basic LRs
-    - [x] colored beacons
-    - [x] beacon sounds
-    - [x] lr menu
-    - [x] initialize lr
-    - [x] abort lr
+Team managements
+--
+- [ ] VoteCT (+API)
+- [ ] Rewrite JBAddons and make VoteCTs dynamic.
+- [ ] Rewrite freekillers.
 
 
-- [x] advanced LRs
-    - [x] save pre-lr weapons and give them to the winner
-    - [x] abort on disconnect
-    - [x] advanced guntoss modes
+Basic LRs
+--
+- [x] Colored beacons.
+- [x] Beacon sounds.
+- [x] LR menu.
+- [x] Initialize LR.
+- [x] Abort LR.
 
 
-- [x] sounds
-    - [x] on lr activated (lr_activated.mp3)
-    - [x] on lr aborted (lr_error.mp3)
-    - [x] on lr started (lr_start.mp3)
-    - [x] on custom lrs (lr_wow.mp3/lr_hax.mp3)
+Advanced LRs
+--
+- [x] Save pre-LR weapons and give them to the winner.
+- [x] Abort on disconnect.
+- [x] Advanced guntoss modes.
 
 
-- [ ] games
-    - [x] dodgeball - tested in CS:S
-    - [x] shot4shot - tested in CS:S and working
-    - [x] random - 500-2500hp, random weapon depending on game, 0.5x-1.5x speed, 0.75x-1.25x gravity
-    - [x] noscope battle (random weapon, depending on game)
-        - [ ] shot4shot mode for noscope battle
-    - [x] grenade fight
-    - [x] backstabs
-    - [x] pro90
-    - [x] headshots
-    - [x] jumpshots (scout/ssg and usp/usp-s)
-    - [x] russian roulette
-    - [x] knife fight
-    - [x] mag4mag
-    - [x] flamethrower - random colors owo
-    - [x] hax fight
-    - [x] gun toss
-    - [x] shotgun wars with cool effects like hellsgamers
-    - [x] rebel
-    - [x] molotov fight (csgo only) - coded, needs testing
-    - [x] freeday/vip (needs JBaddons2 API) - done, needs testing in CS:GO
-    - [x] circle of doom - done, needs testing in CS:GO
-    - [ ] dash fight - https://gist.github.com/7b64ebe83843e710d2542b456650d76b
+Sounds
+--
+- [x] On LR activated (lr_activated.mp3).
+- [x] On LR aborted (lr_error.mp3).
+- [x] On LR started (lr_start.mp3).
+- [x] On custom LRs (lr_wow.mp3/lr_hax.mp3).
 
 
-- [x] rankings
-    - [x] count lr wins - need more than 10 active players
-    - [x] sm_top/sm_lrtop commands
+Games
+--
+- [x] Dodgeball
+- [x] Shot4Shot
+- [x] Random - 500-2500hp, random weapon depending on game, 0.5x-1.5x speed, 0.75x-1.25x gravity.
+- [x] NoScope Battle (random weapon, depending on game)
+    - [ ] Shot4Shot mode for noscope battle
+- [x] Grenade Fight
+- [x] Backstabs
+- [x] Pro90
+- [x] Headshots
+- [x] Jumpshots (scout/ssg and usp/usp-s)
+- [x] Russian Roulette
+- [x] Knife Fight
+- [x] Mag4Mag
+- [x] Flamethrower
+- [x] Hax Fight
+- [x] Deagle Toss
+- [x] Shotgun Wars
+- [x] Rebel
+- [x] Molotov Fight (CS:GO only)
+- [x] Freeday/VIP (needs JBaddons2 API)
+- [x] Circle of Doom
+- [ ] [Dash Fight](https://gist.github.com/7b64ebe83843e710d2542b456650d76b)
 
 
-- [x] starting weapons (t - knife / ct - m4a1/deagle)
+Rankings
+--
+- [x] Count LR wins - need more than 10 active players or an admin.
+- [x] `sm_top`/`sm_lrtop` commands.
 
 
-- [x] api
-    - [x] LRTypes Javit_GetClientLR(int client)
-    - [x] void Javit_GetLRName(LRTypes lr, char[] buffer, int maxlen)
-    - [x] int Javit_GetClientPartner(int client) // get lr partner
-    - [x] void Javit_OnLRAvailable()
-    - [x] bool Javit_OnLRStart(LRTypes type, int prisoner, int guard) - return false to not allow the lr to start
-    - [x] void Javit_OnLRFinish(LRTypes type, int winner, int loser)
-    - [ ] add custom LRs API with dynamic(?)
+API
+--
+- [x] LRTypes Javit_GetClientLR(int client)
+- [x] void Javit_GetLRName(LRTypes lr, char[] buffer, int maxlen)
+- [x] int Javit_GetClientPartner(int client) // get lr partner
+- [x] void Javit_OnLRAvailable()
+- [x] bool Javit_OnLRStart(LRTypes type, int prisoner, int guard) - return false to not allow the lr to start
+- [x] void Javit_OnLRFinish(LRTypes type, int winner, int loser)
+- [ ] Add custom LRs API with Dynamic(?)
