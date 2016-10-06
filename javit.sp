@@ -1069,7 +1069,7 @@ public int MenuHandler_LastRequestType(Menu m, MenuAction a, int p1, int p2)
 				SetWeaponAmmo(p1, iDeagle, 255, 0);
 				EquipPlayerWeapon(p1, iDeagle);
 
-				int iMAG = GivePlayerItem(p1, gG_GameEngine == Game_CSGO? "weapon_negev":"weapon_m249");
+				int iMAG = GivePlayerItem(p1, (gG_GameEngine == Game_CSGO)? "weapon_negev":"weapon_m249");
 				SetWeaponAmmo(p1, iMAG, 255, 0);
 				EquipPlayerWeapon(p1, iMAG);
 				SetEntPropEnt(p1, Prop_Data, "m_hActiveWeapon", iMAG);
@@ -1405,10 +1405,7 @@ public Action Command_Top(int client, int args)
 		return Plugin_Handled;
 	}
 
-	char[] sQuery = new char[128];
-	FormatEx(sQuery, 128, "SELECT name, wins, auth FROM players WHERE wins != 0 ORDER BY wins DESC LIMIT 25;");
-
-	gH_SQL.Query(SQL_Top_Callback, sQuery, GetClientSerial(client));
+	gH_SQL.Query(SQL_Top_Callback, "SELECT name, wins, auth FROM players WHERE wins != 0 ORDER BY wins DESC LIMIT 25;", GetClientSerial(client));
 
 	return Plugin_Handled;
 }
@@ -1430,11 +1427,7 @@ public void SQL_Top_Callback(Database db, DBResultSet results, const char[] erro
 	}
 
 	Menu menu = new Menu(MenuHandler_ShowSteamID3);
-
-	char[] sTitle = new char[32];
-	FormatEx(sTitle, 32, "Top 25 Jailer%s:", results.RowCount > 1? "s":"");
-
-	menu.SetTitle(sTitle);
+	menu.SetTitle("Top 25 Last Request masters");
 
 	int iCount = 0;
 
@@ -1452,7 +1445,7 @@ public void SQL_Top_Callback(Database db, DBResultSet results, const char[] erro
 		results.FetchString(2, sAuth, 32);
 
 		char sDisplay[128];
-		FormatEx(sDisplay, 128, "#%d - %s (%d LR win%s)", ++iCount, sName, iWins, iWins > 1? "s":"");
+		FormatEx(sDisplay, 128, "#%d - %s (%d LR win%s)", ++iCount, sName, iWins, (iWins > 1)? "s":"");
 		menu.AddItem(sAuth, sDisplay);
 	}
 
@@ -1491,6 +1484,7 @@ public void DB_AddWin(int client)
 
 	char[] sQuery = new char[256];
 	FormatEx(sQuery, 256, "UPDATE players SET wins = wins + 1 WHERE auth = '%s';", sAuthID);
+
 	gH_SQL.Query(SQL_UpdateWins_Callback, sQuery);
 }
 
@@ -2659,12 +2653,12 @@ public bool ShootFlame(int client, int target, float distance)
 
 	if(GetClientTeam(client) == CS_TEAM_T)
 	{
-		FormatEx(sColor, 16, "214 104 41");
+		strcopy(sColor, 16, "214 104 41");
 	}
 
 	else
 	{
-		FormatEx(sColor, 16, "41 206 214");
+		strcopy(sColor, 16, "41 206 214");
 	}
 
 	int iFlameEnt = CreateEntityByName("env_steam");
@@ -2685,7 +2679,7 @@ public bool ShootFlame(int client, int target, float distance)
 	AcceptEntityInput(iFlameEnt, "TurnOn");
 	SetVariantString("!activator");
 	AcceptEntityInput(iFlameEnt, "SetParent", client, iFlameEnt, 0);
-	SetVariantString(gG_GameEngine == Game_CSGO? "primary":"forward");
+	SetVariantString((gG_GameEngine == Game_CSGO)? "primary":"forward");
 	AcceptEntityInput(iFlameEnt, "SetParentAttachmentMaintainOffset", iFlameEnt, iFlameEnt, 0);
 
 	int iFlameEnt2 = CreateEntityByName("env_steam");
