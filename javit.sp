@@ -19,9 +19,9 @@
 
 #pragma semicolon 1
 
-#define PLUGIN_VERSION "1.5b"
+#define PLUGIN_VERSION "1.7b"
 
-// #define DEBUG
+#define DEBUG
 
 bool gB_Late = false;
 
@@ -61,6 +61,7 @@ float gF_DoomTime = 0.0;
 
 bool gB_RebelRound = false;
 bool gB_Freeday[MAXPLAYERS+1];
+bool gB_PendingTop[MAXPLAYERS+1];
 
 int gI_BeamSprite = -1;
 int gI_HaloSprite = -1;
@@ -75,6 +76,11 @@ ConVar gCV_IgnoreGrenadeRadio = null;
 Handle gH_Forwards_OnLRAvailable = null;
 Handle gH_Forwards_OnLRStart = null;
 Handle gH_Forwards_OnLRFinish = null;
+
+int gI_LRWins[MAXPLAYERS+1];
+int gI_LRRank[MAXPLAYERS+1];
+
+bool gB_JBAddons = false;
 
 public Plugin myinfo =
 {
@@ -167,43 +173,73 @@ public void OnPluginStart()
 
 	gI_Ammo = FindSendPropInfo("CCSPlayer", "m_iAmmo");
 	gI_NextSecondaryAttack = FindSendPropInfo("CBaseCombatWeapon", "m_flNextSecondaryAttack");
+
+	gB_JBAddons = LibraryExists("jbaddons");
+}
+
+public void OnLibraryAdded(const char[] name)
+{
+	if(StrEqual(name, "jbaddons"))
+	{
+		gB_JBAddons = true;
+	}
+}
+
+public void OnLibraryRemoved(const char[] name)
+{
+	if(StrEqual(name, "jbaddons"))
+	{
+		gB_JBAddons = false;
+	}
 }
 
 public void OnClientPutInServer(int client)
 {
+	if(IsFakeClient(client))
+	{
+		return;
+	}
+
 	gLR_ChosenRequest[client] = LR_None;
 	gLR_SpecialCooldown[client] = 0.0;
 	gLR_DroppedDeagle[client] = false;
 	gB_Freeday[client] = false;
+	gB_PendingTop[client] = false;
 
 	SDKHook(client, SDKHook_OnTakeDamage, OnTakeDamage);
 	SDKHook(client, SDKHook_WeaponCanUse, WeaponCanUse);
 	SDKHook(client, SDKHook_PreThink, PreThink);
 
+	gI_LRWins[client] = 0;
+	gI_LRRank[client] = 0;
+
 	if(gH_SQL != null)
 	{
 		char[] sAuthID3 = new char[32];
-		GetClientAuthId(client, AuthId_Steam3, sAuthID3, 32);
+		
+		if(GetClientAuthId(client, AuthId_Steam3, sAuthID3, 32))
+		{
+			char[] sName = new char[MAX_NAME_LENGTH];
+			GetClientName(client, sName, MAX_NAME_LENGTH);
 
-		char[] sName = new char[MAX_NAME_LENGTH];
-		GetClientName(client, sName, MAX_NAME_LENGTH);
+			int iLength = ((strlen(sName) * 2) + 1);
+			char[] sEscapedName = new char[iLength];
+			gH_SQL.Escape(sName, sEscapedName, iLength);
 
-		int iLength = ((strlen(sName) * 2) + 1);
-		char[] sEscapedName = new char[iLength];
-		gH_SQL.Escape(sName, sEscapedName, iLength);
+			char[] sQuery = new char[256];
+			FormatEx(sQuery, 256, "INSERT INTO players (auth, name) VALUES ('%s', '%s') ON DUPLICATE KEY UPDATE name = '%s';", sAuthID3, sEscapedName, sEscapedName);
 
-		char[] sQuery = new char[256];
-		FormatEx(sQuery, 256, "INSERT INTO players (auth, name) VALUES ('%s', '%s') ON DUPLICATE KEY UPDATE name = '%s';", sAuthID3, sEscapedName, sEscapedName);
-		gH_SQL.Query(SQL_InsertUser_Callback, sQuery, GetClientSerial(client), DBPrio_High);
+			gH_SQL.Query(SQL_InsertUser_Callback, sQuery, GetClientSerial(client), DBPrio_High);
+		}
 	}
 }
 
 public void SQL_InsertUser_Callback(Database db, DBResultSet results, const char[] error, any data)
 {
+	int client = GetClientFromSerial(data);
+
 	if(results == null)
 	{
-		int client = GetClientFromSerial(data);
-
 		if(client == 0)
 		{
 			LogError("Javit error! Failed to insert a disconnected player's data to the table. Reason: %s", error);
@@ -216,9 +252,14 @@ public void SQL_InsertUser_Callback(Database db, DBResultSet results, const char
 
 		return;
 	}
+
+	if(client != 0)
+	{
+		DB_UpdateRank(client);
+	}
 }
 
-public void SQL_DBConnect()
+void SQL_DBConnect()
 {
 	if(gH_SQL != null)
 	{
@@ -589,6 +630,8 @@ public void OnMapStart()
 	PrecacheSoundAny("javit/lr_hax.mp3", true);
 
 	CreateTimer(0.50, Timer_Beacon, INVALID_HANDLE, TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
+
+	gLR_DeagleTossTimer = null;
 }
 
 public void OnClientDisconnect(int client)
@@ -640,7 +683,7 @@ public void Player_Spawn(Event e, const char[] name, bool dB)
 	{
 		GivePlayerItem(client, "weapon_deagle");
 
-		int iRifle = GivePlayerItem(client, gG_GameEngine == Game_CSS? "weapon_m4a1":"weapon_m4a1_silencer");
+		int iRifle = GivePlayerItem(client, (gG_GameEngine == Game_CSS)? "weapon_m4a1":"weapon_m4a1_silencer");
 		EquipPlayerWeapon(client, iRifle);
 
 		SetEntProp(client, Prop_Send, "m_ArmorValue", 100);
@@ -696,8 +739,11 @@ public void Weapon_Fire(Event e, const char[] name, bool dB)
 
 	char[] sWeapon = new char[32];
 	e.GetString("weapon", sWeapon, 32);
+	ReplaceString(sWeapon, 32, "weapon_", "");
 
-	// Javit_PrintToChatAll(sWeapon);
+	#if defined DEBUG
+	Javit_PrintToChat(client, "%s", sWeapon);
+	#endif
 
 	switch(gLR_Current)
 	{
@@ -705,13 +751,15 @@ public void Weapon_Fire(Event e, const char[] name, bool dB)
 		{
 			if(StrEqual(sWeapon, "flashbang"))
 			{
-				GivePlayerItem(client, "weapon_flashbang");
-
 				DataPack dp = new DataPack();
 				dp.WriteCell(GetClientSerial(client));
 				dp.WriteString("weapon_flashbang");
 
-				CreateTimer(0.15, AutoSwitchTimer, dp);
+				CreateTimer(0.25, Timer_AutoSwitch, dp);
+
+				#if defined DEBUG
+				Javit_PrintToChat(client, "Dodgeball timer");
+				#endif
 			}
 		}
 
@@ -767,7 +815,7 @@ public void Weapon_Fire(Event e, const char[] name, bool dB)
 				dp.WriteCell(GetClientSerial(client));
 				dp.WriteString("weapon_hegrenade");
 
-				CreateTimer(0.25, AutoSwitchTimer, dp);
+				CreateTimer(0.25, Timer_AutoSwitch, dp);
 			}
 		}
 
@@ -852,7 +900,7 @@ public void Weapon_Fire(Event e, const char[] name, bool dB)
 				dp.WriteCell(GetClientSerial(client));
 				dp.WriteString("weapon_molotov");
 
-				CreateTimer(0.40, AutoSwitchTimer, dp);
+				CreateTimer(0.25, Timer_AutoSwitch, dp);
 			}
 		}
 
@@ -921,7 +969,7 @@ public Action CS_OnCSWeaponDrop(int client, int weapon)
 	return Plugin_Continue;
 }
 
-public Action AutoSwitchTimer(Handle Timer, any data)
+public Action Timer_AutoSwitch(Handle Timer, any data)
 {
 	ResetPack(data);
 	int serial = ReadPackCell(data);
@@ -939,15 +987,7 @@ public Action AutoSwitchTimer(Handle Timer, any data)
 	}
 
 	FakeClientCommand(client, "use weapon_knife");
-
-	if(!StrEqual(sWeapon, "weapon_flashbang"))
-	{
-		int iWeapon = GivePlayerItem(client, sWeapon);
-
-		SetEntPropEnt(client, Prop_Data, "m_hActiveWeapon", iWeapon);
-		ChangeEdictState(client, FindDataMapInfo(client, "m_hActiveWeapon"));
-	}
-
+	GivePlayerItem(client, sWeapon);
 	FakeClientCommand(client, "use %s", sWeapon);
 
 	return Plugin_Stop;
@@ -972,7 +1012,7 @@ public void Round_Start(Event e, const char[] name, bool dB)
 			{
 				Javit_SetVIP(i, true);
 
-				Javit_PrintToChatAll("\x03%N\x01 picked to have a \x05freeday\x01 as his previous LR!", i);
+				Javit_PrintToChatAll("\x03%N\x01 picked to have a \x05freeday\x01 as their previous LR!", i);
 			}
 
 			gB_Freeday[i] = false;
@@ -1141,7 +1181,7 @@ public int MenuHandler_LastRequestCT(Menu m, MenuAction a, int p1, int p2)
 				{
 					case LR_Freeday:
 					{
-						if(LibraryExists("jbaddons"))
+						if(gB_JBAddons)
 						{
 							gB_Freeday[p1] = true;
 
@@ -1341,7 +1381,7 @@ public int MenuHandler_Weapons(Menu m, MenuAction a, int p1, int p2)
 
 		gLR_Weapon[p1] = StringToInt(sInfo);
 
-		Javit_InitializeLR(p1, gLR_TemporaryPartner[p1], gLR_ChosenRequest[p1], gLR_Weapon[p1] == -2? true:false);
+		Javit_InitializeLR(p1, gLR_TemporaryPartner[p1], gLR_ChosenRequest[p1], (gLR_Weapon[p1] == -2)? true:false);
 	}
 
 	else if(a == MenuAction_Cancel && p2 == MenuCancel_ExitBack)
@@ -1400,18 +1440,24 @@ public Action Command_AbortLR(int client, int args)
 
 public Action Command_Top(int client, int args)
 {
-	if(!IsValidClient(client))
+	if(gB_PendingTop[client] || !IsValidClient(client))
 	{
 		return Plugin_Handled;
 	}
 
 	gH_SQL.Query(SQL_Top_Callback, "SELECT name, wins, auth FROM players WHERE wins != 0 ORDER BY wins DESC LIMIT 25;", GetClientSerial(client));
 
+	gB_PendingTop[client] = true;
+
 	return Plugin_Handled;
 }
 
 public void SQL_Top_Callback(Database db, DBResultSet results, const char[] error, any data)
 {
+	int client = GetClientFromSerial(data);
+
+	gB_PendingTop[client] = false;
+
 	if(results == null)
 	{
 		LogError("Javit (select wins) SQL query failed. Reason: %s", error);
@@ -1419,12 +1465,13 @@ public void SQL_Top_Callback(Database db, DBResultSet results, const char[] erro
 		return;
 	}
 
-	int client = GetClientFromSerial(data);
-
 	if(client == 0)
 	{
 		return;
 	}
+
+	char[] sTitle = new char[128];
+	FormatEx(sTitle, 128, "Top 25 Last Request masters:\nYour rank: #%d (%d wins)", gI_LRRank[client], gI_LRWins[client]);
 
 	Menu menu = new Menu(MenuHandler_ShowSteamID3);
 	menu.SetTitle("Top 25 Last Request masters");
@@ -1477,7 +1524,7 @@ public int MenuHandler_ShowSteamID3(Menu menu, MenuAction action, int param1, in
 	return 0;
 }
 
-public void DB_AddWin(int client)
+void DB_AddWin(int client)
 {
 	char[] sAuthID = new char[32];
 	GetClientAuthId(client, AuthId_Steam3, sAuthID, 32);
@@ -1495,6 +1542,46 @@ public void SQL_UpdateWins_Callback(Database db, DBResultSet results, const char
 		LogError("Javit (update wins) SQL query failed. Reason: %s", error);
 
 		return;
+	}
+}
+
+void DB_UpdateRank(int client)
+{
+	char[] sAuthID3 = new char[32];
+	GetClientAuthId(client, AuthId_Steam3, sAuthID3, 32);
+
+	char[] sQuery = new char[256];
+	FormatEx(sQuery, 256, "SELECT COUNT(*) rank, wins FROM players WHERE wins >= (SELECT wins FROM players WHERE auth = '%s' LIMIT 1) ORDER BY wins DESC LIMIT 1;", sAuthID3);
+
+	gH_SQL.Query(SQL_UpdateRank_Callback, sQuery, GetClientSerial(client), DBPrio_High);
+}
+
+public void SQL_UpdateRank_Callback(Database db, DBResultSet results, const char[] error, any data)
+{
+	if(results == null)
+	{
+		LogError("Javit (update rank) SQL query failed. Reason: %s", error);
+
+		return;
+	}
+
+	int client = GetClientFromSerial(data);
+
+	if(client == 0)
+	{
+		return;
+	}
+
+	if(results.FetchRow() && results.FetchFloat(0) > 0.0)
+	{
+		gI_LRRank[client] = results.FetchInt(0);
+		gI_LRWins[client] = results.FetchInt(1);
+	}
+
+	else
+	{
+		gI_LRRank[client] = 0;
+		gI_LRWins[client] = 0;
 	}
 }
 
@@ -1564,14 +1651,76 @@ public Action Timer_Beacon(Handle Timer)
 #if defined DEBUG
 public Action Command_TestLR(int client, int args)
 {
-	Javit_InitializeLR(client, client, LR_Dodgeball, false);
+	Menu menu = new Menu(MenuHandler_LastRequestTest);
+	menu.SetTitle("Choose a last request to <TEST>:");
+
+	for(int i = 1; i < sizeof(gS_LRNames); i++)
+	{
+		if(gG_GameEngine != Game_CSGO && i == view_as<int>(LR_Molotovs))
+		{
+			continue;
+		}
+
+		if(!gB_JBAddons && i == view_as<int>(LR_Freeday))
+		{
+			continue;
+		}
+
+		char[] sInfo = new char[8];
+		IntToString(i, sInfo, 8);
+
+		menu.AddItem(sInfo, gS_LRNames[i]);
+	}
+
+	if(menu.ItemCount == 0)
+	{
+		menu.AddItem("-1", "Nothing");
+	}
+
+	menu.ExitButton = true;
+	menu.Display(client, MENU_TIME_FOREVER);
 
 	return Plugin_Handled;
+}
+
+public int MenuHandler_LastRequestTest(Menu m, MenuAction a, int p1, int p2)
+{
+	if(a == MenuAction_Select)
+	{
+		if(!IsValidClient(p1, true))
+		{
+			return 0;
+		}
+
+		char[] sInfo = new char[8];
+		m.GetItem(p2, sInfo, 8);
+
+		int iLR = StringToInt(sInfo);
+
+		if(iLR == -1)
+		{
+			Javit_PrintToChat(p1, "ERROR: No LRs are available.");
+
+			return 0;
+		}
+
+		Javit_StopLR("LR aborted due to testing.");
+
+		LRTypes LRChosen = view_as<LRTypes>(iLR);
+		Javit_InitializeLR(p1, p1, LRChosen, false);
+	}
+
+	else if(a == MenuAction_End)
+	{
+		delete m;
+	}
+
+	return 0;
 }
 #endif
 
 // functions
-public void Javit_PrintToChat(int client, const char[] buffer, any ...)
+void Javit_PrintToChat(int client, const char[] buffer, any ...)
 {
 	char[] sFormatted = new char[256];
 	VFormat(sFormatted, 256, buffer, 3);
@@ -1587,7 +1736,7 @@ public void Javit_PrintToChat(int client, const char[] buffer, any ...)
 	}
 }
 
-stock void Javit_PrintToChatAll(const char[] format, any ...)
+void Javit_PrintToChatAll(const char[] format, any ...)
 {
 	char[] buffer = new char[255];
 
@@ -1601,7 +1750,7 @@ stock void Javit_PrintToChatAll(const char[] format, any ...)
 	}
 }
 
-public void Javit_StopLR(const char[] message, any ...)
+void Javit_StopLR(const char[] message, any ...)
 {
 	if(!StrEqual(message, STOPLR_NOTHING)) // not an empty parameter - print a message
 	{
@@ -1641,14 +1790,10 @@ public void Javit_StopLR(const char[] message, any ...)
 
 			SetEntityHealth(gLR_Players[i], gILR_HealthValues[i]);
 			SetEntProp(gLR_Players[i], Prop_Send, "m_ArmorValue", gILR_ArmorValues[i]);
-
 			SetEntPropFloat(gLR_Players[i], Prop_Data, "m_flLaggedMovementValue", 1.0);
 			SetEntityGravity(gLR_Players[i], 1.0);
-
-			SetEntityFlags(gLR_Players[i], GetEntityFlags(gLR_Players[i]) & ~FL_ATCONTROLS);
-
+			SetEntityFlags(gLR_Players[i], (GetEntityFlags(gLR_Players[i]) & ~FL_ATCONTROLS));
 			ExtinguishEntity(gLR_Players[i]);
-
 			SetEntProp(gLR_Players[i], Prop_Data, "m_CollisionGroup", 2);
 
 			gLR_SpecialCooldown[gLR_Players[i]] = 0.0;
@@ -1675,7 +1820,7 @@ public void Javit_StopLR(const char[] message, any ...)
 	gLR_DeagleTossWinner = 0;
 }
 
-public int Javit_GetClientAmount(int team, bool alive)
+int Javit_GetClientAmount(int team, bool alive)
 {
 	int iAlive = 0;
 
@@ -1692,7 +1837,7 @@ public int Javit_GetClientAmount(int team, bool alive)
 	return iAlive;
 }
 
-public void Javit_BeaconEntity(int entity)
+void Javit_BeaconEntity(int entity)
 {
 	float origin[3];
 
@@ -1717,7 +1862,7 @@ public void Javit_BeaconEntity(int entity)
 	TE_SendToAll();
 }
 
-public void Javit_AnnounceLR()
+void Javit_AnnounceLR()
 {
 	if(gB_RebelRound)
 	{
@@ -1749,8 +1894,12 @@ public void Javit_AnnounceLR()
 	Call_Finish();
 }
 
-public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool random)
+bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool random)
 {
+	#if defined DEBUG
+	Javit_PrintToChatAll("<DEBUG> LR Start");
+	#endif
+
 	bool result = true;
 	Call_StartForward(gH_Forwards_OnLRStart);
 	Call_PushCell(view_as<int>(type));
@@ -1812,7 +1961,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
 		SetEntProp(gLR_Players[i], Prop_Send, "m_ArmorValue", 0);
 	}
 
-	Javit_PrintToChatAll("\x03%N\x01 wishes to play \x05%s\x01%s as his last request with \x03%N\x01.", gLR_Players[LR_Prisoner], gS_LRNames[gLR_Current], random? " \x04[random]\x01":"", gLR_Players[LR_Guard]);
+	Javit_PrintToChatAll("\x03%N\x01 wishes to play \x05%s\x01%s as their last request with \x03%N\x01.", gLR_Players[LR_Prisoner], gS_LRNames[gLR_Current], (random)? " \x04[random]\x01":"", gLR_Players[LR_Guard]);
 
 	switch(type)
 	{
@@ -1837,7 +1986,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
 
 			if(gG_GameEngine == Game_CSS)
 			{
-				int iWeapon = gLR_Weapon[prisoner] == -2? GetRandomInt(0, sizeof(gS_CSSPistols) - 1):gLR_Weapon[prisoner];
+				int iWeapon = (gLR_Weapon[prisoner] == -2)? GetRandomInt(0, sizeof(gS_CSSPistols) - 1):gLR_Weapon[prisoner];
 
 				strcopy(sPistol, 128, gS_CSSPistols[iWeapon]);
 				strcopy(sPistolName, 128, gS_CSSPistolNames[iWeapon]);
@@ -1845,7 +1994,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
 
 			else if(gG_GameEngine == Game_CSGO)
 			{
-				int iWeapon = gLR_Weapon[prisoner] == -2? GetRandomInt(0, sizeof(gS_CSGOPistols) - 1):gLR_Weapon[prisoner];
+				int iWeapon = (gLR_Weapon[prisoner] == -2)? GetRandomInt(0, sizeof(gS_CSGOPistols) - 1):gLR_Weapon[prisoner];
 
 				strcopy(sPistol, 128, gS_CSGOPistols[iWeapon]);
 				strcopy(sPistolName, 128, gS_CSGOPistolNames[iWeapon]);
@@ -1876,7 +2025,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
 				SetEntityHealth(gLR_Players[i], 100);
 
 				int iWeapon = GivePlayerItem(gLR_Players[i], sPistol);
-				SetWeaponAmmo(gLR_Players[i], iWeapon, i == iFirst? (gLR_S4SMode == 1? 7:1):0, 0);
+				SetWeaponAmmo(gLR_Players[i], iWeapon, (i == iFirst)? ((gLR_S4SMode == 1)? 7:1):0, 0);
 				EquipPlayerWeapon(gLR_Players[i], iWeapon);
 			}
 		}
@@ -1930,6 +2079,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
 				SetWeaponAmmo(gLR_Players[i], iPrimary, 255, 0);
 			}
 
+			// TODO: scramble names
 			Javit_PrintToChatAll("\x04??? \x05%s", sPistolName);
 			Javit_PrintToChatAll("\x04??? \x05%s", sPrimaryName);
 			Javit_PrintToChatAll("\x04??? \x05%d h", iHP);
@@ -1944,7 +2094,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
 
 			if(gG_GameEngine == Game_CSS)
 			{
-				int iWeapon = gLR_Weapon[prisoner] == -2? GetRandomInt(0, sizeof(gS_CSSSnipers) - 1):gLR_Weapon[prisoner];
+				int iWeapon = (gLR_Weapon[prisoner] == -2)? GetRandomInt(0, sizeof(gS_CSSSnipers) - 1):gLR_Weapon[prisoner];
 
 				strcopy(sSniper, 128, gS_CSSSnipers[iWeapon]);
 				strcopy(sSniperName, 128, gS_CSSSniperNames[iWeapon]);
@@ -1952,7 +2102,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
 
 			else if(gG_GameEngine == Game_CSGO)
 			{
-				int iWeapon = gLR_Weapon[prisoner] == -2? GetRandomInt(0, sizeof(gS_CSGOSnipers) - 1):gLR_Weapon[prisoner];
+				int iWeapon = (gLR_Weapon[prisoner] == -2)? GetRandomInt(0, sizeof(gS_CSGOSnipers) - 1):gLR_Weapon[prisoner];
 
 				strcopy(sSniper, 128, gS_CSGOSnipers[iWeapon]);
 				strcopy(sSniperName, 128, gS_CSGOSniperNames[iWeapon]);
@@ -2094,7 +2244,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
 				SetEntityHealth(gLR_Players[i], 100);
 
 				int iDeagle = GivePlayerItem(gLR_Players[i], "weapon_deagle");
-				SetWeaponAmmo(gLR_Players[i], iDeagle, i == iFirst? 1:0, 0);
+				SetWeaponAmmo(gLR_Players[i], iDeagle, (i == iFirst)? 1:0, 0);
 				EquipPlayerWeapon(gLR_Players[i], iDeagle);
 
 				SetEntityFlags(gLR_Players[i], GetEntityFlags(gLR_Players[i]) | FL_ATCONTROLS);
@@ -2148,11 +2298,11 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
 
 		case LR_DeagleToss:
 		{
-			Javit_PrintToChatAll("Deagle Toss mode: \x04%s\x01 toss.", gLR_DeagleTossMode == 0? "furthest":"closest");
+			Javit_PrintToChatAll("Deagle Toss mode: \x04%s\x01 toss.", (gLR_DeagleTossMode == 0)? "furthest":"closest");
 
 			for(int i = 0; i < sizeof(gLR_Players); i++)
 			{
-				PrintHintText(gLR_Players[i], "Throw it as *%s* as you can.", gLR_DeagleTossMode == 0? "FAR":"CLOSE");
+				PrintHintText(gLR_Players[i], "Throw it as *%s* as you can.", (gLR_DeagleTossMode == 0)? "FAR":"CLOSE");
 
 				Client_RemoveAllWeapons(gLR_Players[i]);
 				SetEntityHealth(gLR_Players[i], 100);
@@ -2195,7 +2345,7 @@ public bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool rando
 		{
 			for(int i = 0; i < sizeof(gLR_Players); i++)
 			{
-				PrintHintText(gLR_Players[i], "Burn him before he burns you.");
+				PrintHintText(gLR_Players[i], "Burn them before they burn you.");
 
 				Client_RemoveAllWeapons(gLR_Players[i]);
 				SetEntityHealth(gLR_Players[i], 200);
@@ -2241,7 +2391,7 @@ public Action Timer_UnfreezePlayers(Handle Timer)
 
 	for(int i = 0; i < sizeof(gLR_Players); i++)
 	{
-		PrintHintText(gLR_Players[i], "Stab him out of the circle, GO!!!");
+		PrintHintText(gLR_Players[i], "Stab them out of the circle, GO!!!");
 
 		SetEntityFlags(gLR_Players[i], GetEntityFlags(gLR_Players[i]) & ~FL_ATCONTROLS);
 	}
@@ -2282,18 +2432,12 @@ public Action Timer_DeagleToss(Handle Timer)
 			if(gLR_DeaglePositionMeasured[i])
 			{
 				int color[4] = {0, 0, 0, 255};
+				color[(i == LR_Prisoner)? 0:2] = 255;
 
-				if(i == LR_Prisoner)
-				{
-					color[0] = 255;
-				}
+				TE_SetupBeamPoints(gLR_DeaglePosition[i], (gLR_DeagleToss_First == -1)? gLR_PreJumpPosition[gLR_Players[i]]:gLR_PreJumpPosition[gLR_Players[gLR_DeagleToss_First]], gI_BeamSprite, gI_HaloSprite, 0, 0, 10.0, 7.5, 5.0, 0, 0.0, color, 0);
+				TE_SendToAll(0.0);
 
-				else
-				{
-					color[2] = 255;
-				}
-
-				TE_SetupBeamPoints(gLR_DeaglePosition[i], gLR_DeagleToss_First == -1? gLR_PreJumpPosition[gLR_Players[i]]:gLR_PreJumpPosition[gLR_Players[gLR_DeagleToss_First]], gI_BeamSprite, gI_HaloSprite, 0, 0, 10.0, 7.5, 5.0, 0, 0.0, color, 0);
+				TE_SetupEnergySplash(gLR_DeaglePosition[i], NULL_VECTOR, false);
 				TE_SendToAll(0.0);
 
 				if(gLR_DeagleToss_First == -1)
@@ -2313,16 +2457,21 @@ public Action Timer_DeagleToss(Handle Timer)
 
 		else
 		{
-			CreateTimer(3.0, Timer_KillTheLoser, INVALID_HANDLE, TIMER_FLAG_NO_MAPCHANGE);
-			Javit_PlayWowSound();
-
-			gLR_DeagleTossTimer = null;
+			KillTheLoser();
 
 			return Plugin_Stop;
 		}
 	}
 
 	return Plugin_Continue;
+}
+
+void KillTheLoser()
+{
+	CreateTimer(3.0, Timer_KillTheLoser, INVALID_HANDLE, TIMER_FLAG_NO_MAPCHANGE);
+	Javit_PlayWowSound();
+
+	gLR_DeagleTossTimer = null;
 }
 
 public Action Timer_KillTheLoser(Handle Timer, any data)
@@ -2402,7 +2551,7 @@ public Action Timer_SwitchToWeapon(Handle Timer, any data)
 	return Plugin_Stop;
 }
 
-public void Javit_DisplayCTList(int client)
+void Javit_DisplayCTList(int client)
 {
 	Menu menu = new Menu(MenuHandler_LastRequestCT);
 
@@ -2438,7 +2587,7 @@ public void Javit_DisplayCTList(int client)
 	menu.Display(client, MENU_TIME_FOREVER);
 }
 
-public void Javit_FinishLR(int winner, int loser, LRTypes type)
+void Javit_FinishLR(int winner, int loser, LRTypes type)
 {
 	Call_StartForward(gH_Forwards_OnLRFinish);
 	Call_PushCell(view_as<int>(type));
@@ -2471,11 +2620,11 @@ public void Javit_FinishLR(int winner, int loser, LRTypes type)
 	{
 		DB_AddWin(winner);
 
-		Javit_PrintToChat(winner, "You earned 1 point for winning this LR! Write \x05!top\x01 to see the rankings.");
+		Javit_PrintToChat(winner, "You earned 1 point for winning this last request! Write \x05!top\x01 to see the rankings.");
 	}
 }
 
-public Action Javit_ShowLRMenu(int client)
+Action Javit_ShowLRMenu(int client)
 {
 	if(!IsValidClient(client, true) || GetClientTeam(client) != CS_TEAM_T || gB_RebelRound)
 	{
@@ -2487,13 +2636,14 @@ public Action Javit_ShowLRMenu(int client)
 
 	for(int i = 1; i < sizeof(gS_LRNames); i++)
 	{
-		// add any csgo exclusive lrs here
+		// for some reason, if i don't separate those, it won't work.
+		// add any csgo exclusive lrs here.
 		if(gG_GameEngine != Game_CSGO && i == view_as<int>(LR_Molotovs))
 		{
 			continue;
 		}
 
-		if(!LibraryExists("jbaddons") && i == view_as<int>(LR_Freeday))
+		if(!gB_JBAddons && i == view_as<int>(LR_Freeday))
 		{
 			continue;
 		}
@@ -2515,12 +2665,12 @@ public Action Javit_ShowLRMenu(int client)
 	return Plugin_Handled;
 }
 
-public void Javit_PlayMissSound()
+void Javit_PlayMissSound()
 {
 	EmitSoundToAllAny("javit/lr_error.mp3", SOUND_FROM_PLAYER, SNDCHAN_STATIC, SNDLEVEL_NORMAL);
 }
 
-public void Javit_PlayWowSound()
+void Javit_PlayWowSound()
 {
 	EmitSoundToAllAny("javit/lr_wow.mp3", SOUND_FROM_PLAYER, SNDCHAN_STATIC, SNDLEVEL_NORMAL);
 }
@@ -2551,9 +2701,13 @@ public Action OnPlayerRunCmd(int client, int &buttons)
 	return Plugin_Continue;
 }
 
-public bool Javit_IsItLRTime()
+bool Javit_IsItLRTime()
 {
+	#if defined DEBUG
+	return true;
+	#else
 	return (gLR_Current == LR_None && Javit_GetClientAmount(CS_TEAM_T, true) == 1 && Javit_GetClientAmount(CS_TEAM_CT, true) > 0);
+	#endif
 }
 
 public bool bFilterNothing(int entity, int mask)
@@ -2571,7 +2725,7 @@ public bool bFilterShotgun(int entity, int mask)
 	return (entity >= MaxClients);
 }
 
-public bool IsSafeTeleport(int client, float distance)
+bool IsSafeTeleport(int client, float distance)
 {
 	float fEyePos[3];
 	float fEyeAngles[3];
@@ -2622,7 +2776,7 @@ public bool IsSafeTeleport(int client, float distance)
 }
 
 // returns true if hit the target
-public bool ShootFlame(int client, int target, float distance)
+bool ShootFlame(int client, int target, float distance)
 {
 	if(GetEngineTime() - gLR_SpecialCooldown[client] < 0.50)
 	{
@@ -2741,7 +2895,7 @@ public Action Timer_KillFlames(Handle Timer, any data)
 	return Plugin_Stop;
 }
 
-public void ShootMonitor(int client)
+void ShootMonitor(int client)
 {
 	if(GetEngineTime() - gLR_SpecialCooldown[client] < 0.75)
 	{
@@ -2821,7 +2975,7 @@ public void ShootMonitor(int client)
 	EmitSoundToAllAny("javit/lr_hax.mp3", SOUND_FROM_PLAYER, SNDCHAN_STATIC, SNDLEVEL_NORMAL);
 }
 
-public int GetLRPartner(int client)
+int GetLRPartner(int client)
 {
 	if(GetClientTeam(client) == CS_TEAM_CT)
 	{
@@ -2841,19 +2995,19 @@ public Action Monitor_StartTouch(int entity, int other)
 		return Plugin_Continue;
 	}
 
-	Explode(entity, other);
+	Explode(entity);
 
 	return Plugin_Continue;
 }
 
 public Action Monitor_OnTakeDamage(int victim, int &attacker, int &inflictor, float &damage, int &damagetype, int &weapon, float damageForce[3], float damagePosition[3])
 {
-	Explode(victim, 0);
+	Explode(victim);
 
 	return Plugin_Continue;
 }
 
-public void Explode(int entity, int target)
+void Explode(int entity)
 {
 	SDKUnhook(entity, SDKHook_StartTouch, Monitor_StartTouch);
 	SDKUnhook(entity, SDKHook_OnTakeDamage, Monitor_OnTakeDamage);
@@ -2867,7 +3021,7 @@ public void Explode(int entity, int target)
 
 	if(iGasCloud != INVALID_ENT_REFERENCE)
 	{
-		AcceptEntityInput(entity, "kill");
+		AcceptEntityInput(entity, "Kill");
 
 		int iExplosion = CreateEntityByName("env_explosion");
 		DispatchKeyValueVector(iExplosion, "Origin", fEntityPosition);
@@ -2880,10 +3034,10 @@ public void Explode(int entity, int target)
 		AcceptEntityInput(iExplosion, "Kill");
 	}
 
-	AcceptEntityInput(entity, "kill");
+	AcceptEntityInput(entity, "Kill");
 }
 
-stock void SetWeaponAmmo(int client, int weapon, int first = -1, int second = -1)
+void SetWeaponAmmo(int client, int weapon, int first = -1, int second = -1)
 {
 	if(first != -1)
 	{
@@ -2902,7 +3056,7 @@ stock void SetWeaponAmmo(int client, int weapon, int first = -1, int second = -1
 	}
 }
 
-public void DisarmPlayer(int client)
+void DisarmPlayer(int client)
 {
 	for(int i = 0; i < 4; i++)
 	{
@@ -2916,7 +3070,7 @@ public void DisarmPlayer(int client)
 	}
 }
 
-public bool IsKnife(const char[] weapon)
+bool IsKnife(const char[] weapon)
 {
 	return (StrContains(weapon, "knife") != -1 || StrContains(weapon, "bayonet") != -1);
 }
@@ -2924,6 +3078,11 @@ public bool IsKnife(const char[] weapon)
 public int Native_GetClientLR(Handle plugin, int numParams)
 {
 	int client = GetNativeCell(1);
+
+	if(IsPlayerAlive(client) && GetClientTeam(client) == CS_TEAM_T && gB_RebelRound)
+	{
+		return view_as<int>(LR_Rebel);
+	}
 
 	if(client != gLR_Players[LR_Prisoner] && client != gLR_Players[LR_Guard])
 	{
@@ -2943,7 +3102,7 @@ public int Native_GetClientPartner(Handle plugin, int numParams)
 	return GetLRPartner(GetNativeCell(1));
 }
 
-stock bool IsValidClient(int client, bool bAlive = false)
+bool IsValidClient(int client, bool bAlive = false)
 {
 	return (client > 0 && client <= MaxClients && IsClientConnected(client) && IsClientInGame(client) && (!bAlive || IsPlayerAlive(client)));
 }
