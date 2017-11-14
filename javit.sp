@@ -343,11 +343,27 @@ public Action OnTakeDamage(int victim, int &attacker, int &inflictor, float &dam
 
 	if(gLR_Current != LR_None)
 	{
+		#if defined DEBUG
+		Javit_PrintToChat(victim, "Damage type: %d (burn: %s | inflictor: %d | attacker: %d)", damagetype, (damagetype == DMG_BURN)? "true":"false", inflictor, attacker);
+		#endif
+
 		int iPartner = GetLRPartner(victim);
 
-		if(damagetype != DMG_BURN)
+		LRTypes iAttackerLR = Javit_GetClientLR(attacker);
+		LRTypes iVictimLR = Javit_GetClientLR(victim);
+
+		if(damagetype == DMG_BURN)
 		{
-			if((gLR_Current == LR_NadeFight && attacker == victim) || (iPartner != inflictor && (Javit_GetClientLR(attacker) == LR_None && Javit_GetClientLR(victim) != LR_None) || (Javit_GetClientLR(attacker) != LR_None && Javit_GetClientLR(victim) == LR_None)))
+			// nesting is necessary here
+			if(gLR_Current == LR_Molotovs && (attacker != iPartner || iAttackerLR != iVictimLR))
+			{
+				return Plugin_Handled;
+			}
+		}
+
+		else
+		{
+			if((gLR_Current == LR_NadeFight && attacker == victim) || (iPartner != inflictor && (iAttackerLR == LR_None && iVictimLR != LR_None) || (iAttackerLR != LR_None && iVictimLR == LR_None)))
 			{
 				return Plugin_Handled;
 			}
