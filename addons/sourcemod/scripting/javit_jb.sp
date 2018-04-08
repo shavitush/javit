@@ -1,5 +1,6 @@
 #include <sourcemod>
 #include <sdktools>
+#include <sdkhooks>
 #include <clientprefs>
 #include <cstrike>
 #include <emitsoundany>
@@ -25,9 +26,12 @@ Handle gH_HUD = null;
 Handle gH_HUD_RandomNumber = null;
 int gI_VoteCT = VoteCT_None;
 float gF_VoteEnd = 0.0;
+float gF_RoundStartTime = -15.0;
 char gS_VoteCTAnswer[64];
 char gS_VoteCTHUD[128];
 ArrayList gA_RandomNumber = null;
+
+ConVar sv_alltalk = null;
 
 public Plugin myinfo =
 {
@@ -55,14 +59,23 @@ public void OnPluginStart()
 
 	gH_HUD = CreateHudSynchronizer();
 	gH_HUD_RandomNumber = CreateHudSynchronizer();
-	CreateTimer(0.1, Timer_HUD, 0, TIMER_REPEAT);
+	CreateTimer(0.1, Timer_Cron, 0, TIMER_REPEAT);
+
+	sv_alltalk = FindConVar("sv_alltalk");
 
 	gH_BanCookie = RegClientCookie("Banned_From_CT", "Tells if you are restricted from joining the CT team", CookieAccess_Protected);
 	gA_RandomNumber = new ArrayList(2);
 
-	// TODO: godmode during vote
+	HookEvent("round_start", Round_Start);
 
-	// TODO: voice handling + 15 sec mute
+	for(int i = 1; i <= MaxClients; i++)
+	{
+		if(IsClientInGame(i))
+		{
+			OnClientPutInServer(i);
+		}
+	}
+
 	// TODO: muteall unmuteall mutet mutect
 
 	// TODO: sm_open with manual setting, use local sqlite database for entity output info. hook buttons too
@@ -84,8 +97,30 @@ public void OnPluginStart()
 
 public void OnMapStart()
 {
+	gF_RoundStartTime = -15.0;
 	PrecacheSoundAny("ui/achievement_earned.wav", true);
 	StopVoteCT("");
+}
+
+public void OnClientPutInServer(int client)
+{
+	SDKHook(client, SDKHook_OnTakeDamage, OnTakeDamage);
+}
+
+public Action OnTakeDamage(int victim, int &attacker, int &inflictor, float &damage, int &damagetype, int &weapon, float damageForce[3], float damagePosition[3])
+{
+	if(gI_VoteCT != VoteCT_None)
+	{
+		return Plugin_Handled;
+	}
+
+	return Plugin_Continue;
+}
+
+public void Round_Start(Event event, const char[] name, bool dontBroadcast)
+{
+	gF_RoundStartTime = GetEngineTime();
+	Javit_PrintToChatAll("\x03Terrorists\x01 are muted for the first \x0515 seconds\x01 of the round.");
 }
 
 public Action Command_VoteCT(int client, int args)
@@ -177,7 +212,6 @@ public int VoteCT_Handler(Menu menu, MenuAction action, int param1, int param2)
 			gI_VoteCT = VoteCT_RandomNumber;
 			IntToString(GetRandomInt(1, 350), gS_VoteCTAnswer, 64);
 			strcopy(gS_VoteCTHUD, 128, "Submit a number from 1 to 350.");
-			PrintToChatAll("%s btw", gS_VoteCTAnswer); // TODO: remove
 		}
 
 		else if(StrEqual(info, "math"))
@@ -213,7 +247,7 @@ public int VoteCT_Handler(Menu menu, MenuAction action, int param1, int param2)
 	}
 }
 
-public Action Timer_HUD(Handle timer)
+public Action Timer_Cron(Handle timer)
 {
 	for(int i = 1; i <= MaxClients; i++)
 	{
@@ -222,38 +256,73 @@ public Action Timer_HUD(Handle timer)
 			continue;
 		}
 
-		SetHudTextParams(-1.0, -0.7, 0.5, 145, 180, 255, 255, 0, 0.0, 0.0, 0.0);
-		ShowSyncHudText(i, gH_HUD, "%s", gS_VoteCTHUD);
-
-		if(gI_VoteCT == VoteCT_RandomNumber)
-		{
-			SetHudTextParams(-1.0, -0.65, 0.5, 165, 200, 255, 255, 0, 0.0, 0.0, 0.0);
-
-			float fTimeLeft = 25.0 - (GetEngineTime() - gF_VoteEnd);
-
-			if(fTimeLeft >= 0.0)
-			{
-				ShowSyncHudText(i, gH_HUD_RandomNumber, "%.01f seconds left!", fTimeLeft);
-			}
-			
-			else
-			{
-				ShowSyncHudText(i, gH_HUD_RandomNumber, "");
-
-				if(gA_RandomNumber.Length == 0)
-				{
-					StopVoteCT("Time is up and no entries were submitted.");
-				}
-
-				else
-				{
-					DrawRandomNumberWinner();
-				}
-			}
-		}
+		PrintHUD(i);
+		SetVoicePermissions(i);
 	}
 
 	return Plugin_Continue;
+}
+
+void PrintHUD(int client)
+{
+	SetHudTextParams(-1.0, -0.7, 0.5, 255, 192, 203, 255, 0, 0.0, 0.0, 0.0);
+	ShowSyncHudText(client, gH_HUD, "%s", gS_VoteCTHUD);
+
+	if(gI_VoteCT == VoteCT_RandomNumber)
+	{
+		SetHudTextParams(-1.0, -0.65, 0.5, 255, 220, 210, 255, 0, 0.0, 0.0, 0.0);
+
+		float fTimeLeft = 25.0 - (GetEngineTime() - gF_VoteEnd);
+
+		if(fTimeLeft >= 0.0)
+		{
+			ShowSyncHudText(client, gH_HUD_RandomNumber, "%.01f seconds left!", fTimeLeft);
+		}
+		
+		else
+		{
+			ShowSyncHudText(client, gH_HUD_RandomNumber, "");
+
+			if(gA_RandomNumber.Length == 0)
+			{
+				StopVoteCT("Time is up and no entries were submitted.");
+			}
+
+			else
+			{
+				DrawRandomNumberWinner();
+			}
+		}
+	}
+}
+
+void SetVoicePermissions(int client)
+{
+	int iTeam = GetClientTeam(client);
+	bool bAdmin = CheckCommandAccess(client, "voice_chat", ADMFLAG_CHAT);
+	bool bAlive = IsPlayerAlive(client);
+	bool bTMuted = (GetEngineTime() - gF_RoundStartTime) <= 15.0;
+	bool bAlltalk = sv_alltalk.BoolValue;
+
+	for(int i = 1; i <= MaxClients; i++)
+	{
+		if(!IsClientInGame(i))
+		{
+			continue;
+		}
+
+		int iListenerTeam = GetClientTeam(i);
+
+		ListenOverride iOverride = Listen_Yes;
+
+		if((!bAdmin && (!bAlive || (iTeam != CS_TEAM_CT && bTMuted))) ||
+			(!bAlltalk && iTeam != iListenerTeam))
+		{
+			iOverride = Listen_No;
+		}
+
+		SetListenOverride(i, client, iOverride);
+	}
 }
 
 any Abs(any num)
