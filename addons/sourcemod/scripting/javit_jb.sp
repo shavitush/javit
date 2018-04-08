@@ -22,6 +22,10 @@ enum
 
 bool gB_TeamMuted[4];
 
+bool gB_VIP[MAXPLAYERS+1];
+int gI_BeamSprite = -1;
+int gI_HaloSprite = -1;
+
 Handle gH_BanCookie = null;
 
 Handle gH_HUD = null;
@@ -61,13 +65,14 @@ public void OnPluginStart()
 
 	gH_HUD = CreateHudSynchronizer();
 	gH_HUD_RandomNumber = CreateHudSynchronizer();
-	CreateTimer(0.1, Timer_Cron, 0, TIMER_REPEAT);
 
 	sv_alltalk = FindConVar("sv_alltalk");
 
 	gH_BanCookie = RegClientCookie("Banned_From_CT", "Tells if you are restricted from joining the CT team", CookieAccess_Protected);
 	gA_RandomNumber = new ArrayList(2);
 
+	HookEvent("player_spawn", Player_Spawn);
+	HookEvent("player_death", Player_Death);
 	HookEvent("round_start", Round_Start);
 
 	for(int i = 1; i <= MaxClients; i++)
@@ -82,17 +87,17 @@ public void OnPluginStart()
 	RegAdminCmd("sm_tmute", Command_MuteT, ADMFLAG_CHAT, "Mute all Ts.");
 	RegAdminCmd("sm_mutect", Command_MuteCT, ADMFLAG_CHAT, "Mute all CTs.");
 	RegAdminCmd("sm_ctmute", Command_MuteCT, ADMFLAG_CHAT, "Mute all CTs.");
-	RegAdminCmd("sm_muteall", Command_MuteAll, ADMFLAG_CHAT, "Mmute everyone.");
+	RegAdminCmd("sm_muteall", Command_MuteAll, ADMFLAG_CHAT, "Mute everyone.");
 	RegAdminCmd("sm_unmuteall", Command_UnmuteAll, ADMFLAG_CHAT, "Unmute everyone.");
+
+	RegConsoleCmd("sm_vip", Command_VIP, "Assign VIP status. Usage: sm_vip <target>");
 
 	// TODO: sm_open with manual setting, use local sqlite database for entity output info. hook buttons too
 	// TODO: sm_kickct sm_ctkick
 	// TODO: sm_chooser sm_leader sm_warden
 	// TODO: sm_choose sm_ctlist
-	// TODO: sm_vip (+ beacon)
 	// TODO: sm_box
 	// TODO: sm_givelr
-	// TODO: voice chat management, respect sv_alltalk
 	// TODO: sm_freekill sm_fk
 	// TODO: sm_medic
 
@@ -107,11 +112,25 @@ public void OnMapStart()
 	gF_RoundStartTime = -15.0;
 	PrecacheSoundAny("ui/achievement_earned.wav", true);
 	StopVoteCT("");
+
+	if(GetEngineVersion() == Engine_CSS)
+	{
+		gI_BeamSprite = PrecacheModel("sprites/laser.vmt", true);
+		gI_HaloSprite = PrecacheModel("sprites/halo01.vmt", true);
+	}
+
+	else
+	{
+		gI_BeamSprite = PrecacheModel("sprites/laserbeam.vmt", true);
+		gI_HaloSprite = PrecacheModel("sprites/glow01.vmt", true);
+	}
 }
 
 public void OnClientPutInServer(int client)
 {
 	SDKHook(client, SDKHook_OnTakeDamage, OnTakeDamage);
+
+	gB_VIP[client] = false;
 }
 
 public Action OnTakeDamage(int victim, int &attacker, int &inflictor, float &damage, int &damagetype, int &weapon, float damageForce[3], float damagePosition[3])
@@ -122,6 +141,52 @@ public Action OnTakeDamage(int victim, int &attacker, int &inflictor, float &dam
 	}
 
 	return Plugin_Continue;
+}
+
+public void Player_Spawn(Event event, const char[] name, bool dontBroadcast)
+{
+	int userid = event.GetInt("userid");
+	int client = GetClientOfUserId(userid);
+
+	gB_VIP[client] = false;
+}
+
+public void Player_Death(Event event, const char[] name, bool dontBroadcast)
+{
+	// Clear unnecessary VIP statuses.
+	int userid = event.GetInt("userid");
+	int victim = GetClientOfUserId(userid);
+
+	gB_VIP[victim] = false;
+
+	int iVIPCount = 0;
+	int iNonVIPs = 0;
+
+	for(int i = 1; i <= MaxClients; i++)
+	{
+		if(!IsClientInGame(i) || !IsPlayerAlive(i))
+		{
+			continue;
+		}
+
+		if(gB_VIP[i])
+		{
+			iVIPCount++;
+		}
+
+		else
+		{
+			iNonVIPs++;
+		}
+	}
+
+	if(iNonVIPs <= 1 && iVIPCount > 0)
+	{
+		for(int i = 1; i <= MaxClients; i++)
+		{
+			gB_VIP[i] = false;
+		}
+	}
 }
 
 public void Round_Start(Event event, const char[] name, bool dontBroadcast)
@@ -170,6 +235,75 @@ public Action Command_UnmuteAll(int client, int args)
 	ShowActivity(client, "Unmuted all players.");
 
 	return Plugin_Handled;
+}
+
+public Action Command_VIP(int client, int args)
+{
+	bool bCanVIP = client == 0 || CheckCommandAccess(client, "javit_vip", ADMFLAG_SLAY) || (GetClientTeam(client) == CS_TEAM_CT && IsPlayerAlive(client));
+
+	if(!bCanVIP)
+	{
+		Javit_PrintToChat(client, "Your access level is not high enough for this command. Requirements: CT or admin access.");
+
+		return Plugin_Handled;
+	}
+
+	if(args == 0)
+	{
+		ReplyToCommand(client, "Usage: sm_vip <target>");
+
+		return Plugin_Handled;
+	}
+
+	char[] sArgs = new char[MAX_TARGET_LENGTH];
+	GetCmdArgString(sArgs, MAX_TARGET_LENGTH);
+
+	int iTarget = FindTarget(client, sArgs, false, false);
+
+	if(iTarget == -1)
+	{
+		return Plugin_Handled;
+	}
+
+	if(GetTeamPlayerCount(CS_TEAM_T, true) <= 0) // TODO: 2
+	{
+		ReplyToCommand(client, "You are not allowed to grant VIP access when only 2 or less Terrorists are alive. %d");
+
+		return Plugin_Handled;
+	}
+
+	if(GetClientTeam(iTarget) != CS_TEAM_T)
+	{
+		ReplyToCommand(client, "Only Terrorists may be VIPs.");
+
+		return Plugin_Handled;
+	}
+
+	gB_VIP[iTarget] = !gB_VIP[iTarget];
+
+	Javit_PrintToChatAll("\x03%N\x01 is \x05%s\x01.", iTarget, (gB_VIP[iTarget])? "VIP":"not a VIP anymore");
+
+	return Plugin_Handled;
+}
+
+int GetTeamPlayerCount(int team = -1, bool alive = false)
+{
+	int count = 0;
+
+	for(int i = 1; i <= MaxClients; i++)
+	{
+		if(!IsClientInGame(i))
+		{
+			continue;
+		}
+
+		if((team == -1 || GetClientTeam(i) == team) && (!alive || IsPlayerAlive(i)))
+		{
+			count++;
+		}
+	}
+
+	return count;
 }
 
 public Action Command_VoteCT(int client, int args)
@@ -296,7 +430,22 @@ public int VoteCT_Handler(Menu menu, MenuAction action, int param1, int param2)
 	}
 }
 
-public Action Timer_Cron(Handle timer)
+public void OnGameFrame()
+{
+	int iTicks = GetGameTickCount();
+
+	if(iTicks % 10 == 0)
+	{
+		Cron();
+	}
+
+	if(iTicks % 100 == 0)
+	{
+		BeaconVIPs();
+	}
+}
+
+void Cron()
 {
 	for(int i = 1; i <= MaxClients; i++)
 	{
@@ -308,8 +457,19 @@ public Action Timer_Cron(Handle timer)
 		PrintHUD(i);
 		SetVoicePermissions(i);
 	}
+}
 
-	return Plugin_Continue;
+void BeaconVIPs()
+{
+	for(int i = 1; i <= MaxClients; i++)
+	{
+		if(!gB_VIP[i] || !IsClientInGame(i) || GetClientTeam(i) != CS_TEAM_T || !IsPlayerAlive(i))
+		{
+			continue;
+		}
+
+		Javit_BeaconEntity(i);
+	}
 }
 
 void PrintHUD(int client)
@@ -513,6 +673,28 @@ bool IsFreeKiller(int client)
 public int Native_SetVIP(Handle plugin, int numParams)
 {
 	// TODO: implement
+}
+
+void Javit_BeaconEntity(int entity)
+{
+	float origin[3];
+
+	if(entity <= MaxClients)
+	{
+		GetClientAbsOrigin(entity, origin);
+	}
+
+	else
+	{
+		GetEntPropVector(entity, Prop_Send, "m_vecOrigin", origin);
+	}
+
+	origin[2] += 10;
+
+	int colors[4] = {255, 255, 255, 255};
+
+	TE_SetupBeamRingPoint(origin, 10.0, 250.0, gI_BeamSprite, gI_HaloSprite, 0, 60, 0.75, 2.5, 0.0, colors, 10, 0);
+	TE_SendToAll();
 }
 
 void Javit_PrintToChat(int client, const char[] buffer, any ...)
