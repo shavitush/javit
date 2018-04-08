@@ -11,7 +11,7 @@ Team managements
 --
 - [ ] VoteCT (+API)
 - [ ] Rewrite JBAddons and make VoteCTs dynamic.
-- [ ] Rewrite freekillers.
+- [ ] Rewrite CT bans.
 
 
 Basic LRs
@@ -78,4 +78,4 @@ API
 - [x] void Javit_OnLRAvailable()
 - [x] bool Javit_OnLRStart(LRTypes type, int prisoner, int guard) - return false to not allow the lr to start
 - [x] void Javit_OnLRFinish(LRTypes type, int winner, int loser)
-- [ ] Add custom LRs API with Dynamic(?)
+- [ ] custom LRs API

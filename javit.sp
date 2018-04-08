@@ -6,22 +6,18 @@
 #include <smlib/clients>
 #include <smlib/weapons>
 
-#undef REQUIRE_PLUGIN
-#include <jbaddons>
-
 #pragma newdecls required
 
 #define PISTOLS
 #define PRIMARIES
 #define SNIPERS
 #define LRNAMES
+#undef REQUIRE_PLUGIN
 #include <javit>
 
 #pragma semicolon 1
 
-#define PLUGIN_VERSION "1.7b"
-
-#define DEBUG
+// #define DEBUG
 
 bool gB_Late = false;
 
@@ -88,14 +84,12 @@ public Plugin myinfo =
 	author = "shavit",
 	description = "Last Requests handler for CS:S/CS:GO Jailbreak servers.",
 	version = PLUGIN_VERSION,
-	url = "https://github.com/shavitush/"
+	url = "https://github.com/shavitush"
 };
 
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
 {
 	RegPluginLibrary("javit");
-
-	MarkNativeAsOptional("Javit_SetVIP");
 
 	CreateNative("Javit_GetClientLR", Native_GetClientLR);
 	CreateNative("Javit_GetLRName", Native_GetLRName);
@@ -334,11 +328,6 @@ public Action OnTakeDamage(int victim, int &attacker, int &inflictor, float &dam
 	if(attacker == 0 || !IsValidClient(attacker))
 	{
 		return Plugin_Continue;
-	}
-
-	else if(IsPlayerAlive(attacker) && GetClientTeam(attacker) != GetClientTeam(victim))
-	{
-		PrintHintText(attacker, "-%d HP", RoundToFloor(damage));
 	}
 
 	if(gLR_Current != LR_None)
@@ -647,7 +636,7 @@ public void OnMapStart()
 
 	CreateTimer(0.50, Timer_Beacon, INVALID_HANDLE, TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
 
-	gLR_DeagleTossTimer = null;
+	delete gLR_DeagleTossTimer;
 }
 
 public void OnClientDisconnect(int client)
@@ -997,7 +986,7 @@ public Action Timer_AutoSwitch(Handle Timer, any data)
 
 	int client = GetClientFromSerial(serial);
 
-	if(client == 0)
+	if(client == 0 || !IsPlayerAlive(client))
 	{
 		return Plugin_Stop;
 	}
@@ -1773,7 +1762,7 @@ void Javit_StopLR(const char[] message, any ...)
 		char[] sFormatted = new char[256];
 		VFormat(sFormatted, 256, message, 2);
 
-		Javit_PrintToChatAll(sFormatted);
+		Javit_PrintToChatAll("%s", sFormatted);
 	}
 
 	if(gCV_IgnoreGrenadeRadio != null)
@@ -1824,12 +1813,7 @@ void Javit_StopLR(const char[] message, any ...)
 	}
 
 	gLR_DeagleToss_First = -1;
-
-	if(gLR_DeagleTossTimer != null)
-	{
-		delete gLR_DeagleTossTimer;
-		gLR_DeagleTossTimer = null;
-	}
+	delete gLR_DeagleTossTimer;
 
 	gLR_DeagleTossMode = 0;
 	gLR_DeagleTossAllowEquips = true;
@@ -2473,21 +2457,16 @@ public Action Timer_DeagleToss(Handle Timer)
 
 		else
 		{
-			KillTheLoser();
+			CreateTimer(3.0, Timer_KillTheLoser, INVALID_HANDLE, TIMER_FLAG_NO_MAPCHANGE);
+			Javit_PlayWowSound();
+
+			gLR_DeagleTossTimer = null;
 
 			return Plugin_Stop;
 		}
 	}
 
 	return Plugin_Continue;
-}
-
-void KillTheLoser()
-{
-	CreateTimer(3.0, Timer_KillTheLoser, INVALID_HANDLE, TIMER_FLAG_NO_MAPCHANGE);
-	Javit_PlayWowSound();
-
-	gLR_DeagleTossTimer = null;
 }
 
 public Action Timer_KillTheLoser(Handle Timer, any data)
@@ -2504,8 +2483,8 @@ public Action Timer_KillTheLoser(Handle Timer, any data)
 		fDistances[i] = GetVectorDistance(gLR_DeaglePosition[i], gLR_PreJumpPosition[gLR_Players[gLR_DeagleToss_First]]);
 	}
 
-	Javit_PrintToChatAll("\x04[\x03%N\x04] - \x05%.02f", gLR_Players[LR_Prisoner], fDistances[LR_Prisoner]);
-	Javit_PrintToChatAll("\x04[\x03%N\x04] - \x05%.02f", gLR_Players[LR_Guard], fDistances[LR_Guard]);
+	Javit_PrintToChatAll("\x04[\x03%N\x04] - \x05%d", gLR_Players[LR_Prisoner], RoundToNearest(fDistances[LR_Prisoner]));
+	Javit_PrintToChatAll("\x04[\x03%N\x04] - \x05%d", gLR_Players[LR_Guard], RoundToNearest(fDistances[LR_Guard]));
 
 	int iWinner = 0;
 
