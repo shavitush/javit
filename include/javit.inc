@@ -3,6 +3,8 @@
 #endif
 #define _javit_included_
 
+#define PLUGIN_VERSION "2.0b"
+
 #define LR_Prisoner 0
 #define LR_Guard 1
 
@@ -307,6 +309,15 @@ native void Javit_GetLRName(LRTypes lr, char[] buffer);
  */
 native int Javit_GetClientPartner(int client);
 
+/**
+ * Sets VIP status for a player.
+ *
+ * @param client  					Client index.
+ * @param status					VIP or not?
+ * @noreturn
+ */
+native void Javit_SetVIP(int client, bool status);
+
 public SharedPlugin __pl_javit =
 {
 	name = "javit",
@@ -324,5 +335,6 @@ public void __pl_javit_SetNTVOptional()
 	MarkNativeAsOptional("Javit_GetClientLR");
 	MarkNativeAsOptional("Javit_GetLRName");
 	MarkNativeAsOptional("Javit_GetClientPartner");
+	MarkNativeAsOptional("Javit_SetVIP");
 }
 #endif
