@@ -20,6 +20,8 @@ enum
 	VoteCT_Math
 }
 
+bool gB_TeamMuted[4];
+
 Handle gH_BanCookie = null;
 
 Handle gH_HUD = null;
@@ -76,7 +78,12 @@ public void OnPluginStart()
 		}
 	}
 
-	// TODO: muteall unmuteall mutet mutect
+	RegAdminCmd("sm_mutet", Command_MuteT, ADMFLAG_CHAT, "Mute all Ts.");
+	RegAdminCmd("sm_tmute", Command_MuteT, ADMFLAG_CHAT, "Mute all Ts.");
+	RegAdminCmd("sm_mutect", Command_MuteCT, ADMFLAG_CHAT, "Mute all CTs.");
+	RegAdminCmd("sm_ctmute", Command_MuteCT, ADMFLAG_CHAT, "Mute all CTs.");
+	RegAdminCmd("sm_muteall", Command_MuteAll, ADMFLAG_CHAT, "Mmute everyone.");
+	RegAdminCmd("sm_unmuteall", Command_UnmuteAll, ADMFLAG_CHAT, "Unmute everyone.");
 
 	// TODO: sm_open with manual setting, use local sqlite database for entity output info. hook buttons too
 	// TODO: sm_kickct sm_ctkick
@@ -121,6 +128,48 @@ public void Round_Start(Event event, const char[] name, bool dontBroadcast)
 {
 	gF_RoundStartTime = GetEngineTime();
 	Javit_PrintToChatAll("\x03Terrorists\x01 are muted for the first \x0515 seconds\x01 of the round.");
+}
+
+public Action Command_MuteT(int client, int args)
+{
+	gB_TeamMuted[CS_TEAM_T] = true;
+
+	ShowActivity(client, "Muted all Terrorists.");
+
+	return Plugin_Handled;
+}
+
+public Action Command_MuteCT(int client, int args)
+{
+	gB_TeamMuted[CS_TEAM_CT] = true;
+	
+	ShowActivity(client, "Muted all Counter-Terrorists.");
+
+	return Plugin_Handled;
+}
+
+public Action Command_MuteAll(int client, int args)
+{
+	for(int i = CS_TEAM_NONE; i <= CS_TEAM_CT; i++)
+	{
+		gB_TeamMuted[i] = true;
+	}
+	
+	ShowActivity(client, "Muted all players.");
+
+	return Plugin_Handled;
+}
+
+public Action Command_UnmuteAll(int client, int args)
+{
+	for(int i = CS_TEAM_NONE; i <= CS_TEAM_CT; i++)
+	{
+		gB_TeamMuted[i] = false;
+	}
+	
+	ShowActivity(client, "Unmuted all players.");
+
+	return Plugin_Handled;
 }
 
 public Action Command_VoteCT(int client, int args)
@@ -312,10 +361,9 @@ void SetVoicePermissions(int client)
 		}
 
 		int iListenerTeam = GetClientTeam(i);
-
 		ListenOverride iOverride = Listen_Yes;
 
-		if((!bAdmin && (!bAlive || (iTeam != CS_TEAM_CT && bTMuted))) ||
+		if((!bAdmin && (gB_TeamMuted[iTeam] || !bAlive || (iTeam != CS_TEAM_CT && bTMuted))) ||
 			(!bAlltalk && iTeam != iListenerTeam))
 		{
 			iOverride = Listen_No;
