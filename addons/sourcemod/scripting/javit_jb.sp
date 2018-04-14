@@ -20,7 +20,14 @@ enum
 	VoteCT_Math
 }
 
+ConVar sv_alltalk = null;
+ConVar mp_friendlyfire = null;
+ConVar mp_teammates_are_enemies = null;
+
 bool gB_TeamMuted[4];
+
+char gS_BeepSound[PLATFORM_MAX_PATH];
+bool gB_Medicated[MAXPLAYERS+1];
 
 bool gB_VIP[MAXPLAYERS+1];
 int gI_BeamSprite = -1;
@@ -36,8 +43,16 @@ float gF_RoundStartTime = -15.0;
 char gS_VoteCTAnswer[64];
 char gS_VoteCTHUD[128];
 ArrayList gA_RandomNumber = null;
+char gS_LastWinnerID[32];
 
-ConVar sv_alltalk = null;
+Database gH_SQLite = null;
+int gI_ButtonID = -1;
+int gI_ClientButton[MAXPLAYERS+1];
+bool gB_CellsOpened = false;
+
+char gS_Map[64];
+char gS_ButtonOrigin[MAXPLAYERS+1][32];
+char gS_MapButtonOrigin[32];
 
 public Plugin myinfo =
 {
@@ -59,7 +74,12 @@ public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max
 
 public void OnPluginStart()
 {
-	RegAdminCmd("sm_votect", Command_VoteCT, ADMFLAG_GENERIC, "Initiate a manual CT vote.");
+	EngineVersion version = GetEngineVersion();
+
+	if(version != Engine_CSS && version != Engine_CSGO)
+	{
+		SetFailState("This plugin was not meant to be used for any other game besides CS:S and CS:GO.");
+	}
 
 	LoadTranslations("common.phrases");
 
@@ -67,12 +87,22 @@ public void OnPluginStart()
 	gH_HUD_RandomNumber = CreateHudSynchronizer();
 
 	sv_alltalk = FindConVar("sv_alltalk");
+	mp_friendlyfire = FindConVar("mp_friendlyfire");
+	mp_teammates_are_enemies = FindConVar("mp_teammates_are_enemies");
+
+	mp_friendlyfire.Flags &= ~FCVAR_NOTIFY;
+
+	if(mp_teammates_are_enemies != null)
+	{
+		mp_teammates_are_enemies.Flags &= ~FCVAR_NOTIFY;
+	}
 
 	gH_BanCookie = RegClientCookie("Banned_From_CT", "Tells if you are restricted from joining the CT team", CookieAccess_Protected);
 	gA_RandomNumber = new ArrayList(2);
 
 	HookEvent("player_spawn", Player_Spawn);
 	HookEvent("player_death", Player_Death);
+	HookEvent("player_hurt", Player_Hurt, EventHookMode_Pre);
 	HookEvent("round_start", Round_Start);
 
 	for(int i = 1; i <= MaxClients; i++)
@@ -83,32 +113,45 @@ public void OnPluginStart()
 		}
 	}
 
+	RegAdminCmd("sm_votect", Command_VoteCT, ADMFLAG_GENERIC, "Initiate a manual CT vote.");
 	RegAdminCmd("sm_mutet", Command_MuteT, ADMFLAG_CHAT, "Mute all Ts.");
 	RegAdminCmd("sm_tmute", Command_MuteT, ADMFLAG_CHAT, "Mute all Ts.");
 	RegAdminCmd("sm_mutect", Command_MuteCT, ADMFLAG_CHAT, "Mute all CTs.");
 	RegAdminCmd("sm_ctmute", Command_MuteCT, ADMFLAG_CHAT, "Mute all CTs.");
 	RegAdminCmd("sm_muteall", Command_MuteAll, ADMFLAG_CHAT, "Mute everyone.");
 	RegAdminCmd("sm_unmuteall", Command_UnmuteAll, ADMFLAG_CHAT, "Unmute everyone.");
+	RegAdminCmd("sm_setbutton", Command_SetButton, ADMFLAG_CONVARS, "Set the cell open button.");
 
 	RegConsoleCmd("sm_vip", Command_VIP, "Assign VIP status. Usage: sm_vip <target>");
+	RegConsoleCmd("sm_open", Command_Open, "Assign VIP status. Usage: sm_vip <target>");
+	RegConsoleCmd("sm_medic", Command_Medic, "Request assistance from the paramedics.");
+	RegConsoleCmd("sm_box", Command_Box, "It's boxing time!");
 
-	// TODO: sm_open with manual setting, use local sqlite database for entity output info. hook buttons too
-	// TODO: sm_kickct sm_ctkick
-	// TODO: sm_chooser sm_leader sm_warden
-	// TODO: sm_choose sm_ctlist
+	SQL_DBConnect();
+
 	// TODO: sm_box
 	// TODO: sm_givelr
 	// TODO: sm_freekill sm_fk
-	// TODO: sm_medic
 
+	// TODO: sm_kickct sm_ctkick
+	// TODO: sm_chooser sm_leader sm_warden
+	// TODO: sm_choose sm_ctlist
+	// TODO: restart round after successful votect - 60 sec godmode round
 	// TODO: hook joingame and jointeam. joingame should be blocked, jointeam should respect ratios
-
-	// TODO: damage text
-	// https://github.com/rogeraabbccdd/CSGO-Damage-Text
 }
 
 public void OnMapStart()
 {
+	gI_ButtonID = -1;
+	gS_MapButtonOrigin = "0 0 0";
+
+	GetCurrentMap(gS_Map, 64);
+	GetMapDisplayName(gS_Map, gS_Map, 64);
+
+	char sQuery[256];
+	FormatEx(sQuery, 256, "SELECT origin FROM maps WHERE map = '%s';", gS_Map);
+	gH_SQLite.Query(SQL_GetButtonOrigin_Callback, sQuery);
+
 	gF_RoundStartTime = -15.0;
 	PrecacheSoundAny("ui/achievement_earned.wav", true);
 	StopVoteCT("");
@@ -121,8 +164,39 @@ public void OnMapStart()
 
 	else
 	{
-		gI_BeamSprite = PrecacheModel("sprites/laserbeam.vmt", true);
+		gI_BeamSprite = PrecacheModel("sprites/bomb_planted_ring.vmt", true);
 		gI_HaloSprite = PrecacheModel("sprites/glow01.vmt", true);
+	}
+
+	Handle hConfig = LoadGameConfigFile("funcommands.games");
+
+	if(hConfig == null)
+	{
+		SetFailState("Unable to load game config funcommands.games");
+
+		return;
+	}
+	
+	if(GameConfGetKeyValue(hConfig, "SoundBeep", gS_BeepSound, PLATFORM_MAX_PATH))
+	{
+		PrecacheSound(gS_BeepSound, true);
+	}
+
+	delete hConfig;
+}
+
+public void SQL_GetButtonOrigin_Callback(Database db, DBResultSet results, const char[] error, any data)
+{
+	if(results == null)
+	{
+		LogError("SQL error! Reason: %s", error);
+
+		return;
+	}
+
+	if(results.FetchRow())
+	{
+		results.FetchString(0, gS_MapButtonOrigin, 32);
 	}
 }
 
@@ -140,6 +214,16 @@ public Action OnTakeDamage(int victim, int &attacker, int &inflictor, float &dam
 		return Plugin_Handled;
 	}
 
+	if(mp_friendlyfire.BoolValue)
+	{
+		int team = GetClientTeam(attacker);
+
+		if(team != CS_TEAM_T && team == GetClientTeam(victim))
+		{
+			return Plugin_Handled;
+		}
+	}
+
 	return Plugin_Continue;
 }
 
@@ -149,13 +233,13 @@ public void Player_Spawn(Event event, const char[] name, bool dontBroadcast)
 	int client = GetClientOfUserId(userid);
 
 	gB_VIP[client] = false;
+	gB_Medicated[client] = false;
 }
 
 public void Player_Death(Event event, const char[] name, bool dontBroadcast)
 {
 	// Clear unnecessary VIP statuses.
-	int userid = event.GetInt("userid");
-	int victim = GetClientOfUserId(userid);
+	int victim = GetClientOfUserId(event.GetInt("userid"));
 
 	gB_VIP[victim] = false;
 
@@ -164,7 +248,7 @@ public void Player_Death(Event event, const char[] name, bool dontBroadcast)
 
 	for(int i = 1; i <= MaxClients; i++)
 	{
-		if(!IsClientInGame(i) || !IsPlayerAlive(i))
+		if(!IsClientInGame(i) || !IsPlayerAlive(i) || GetClientTeam(i) != CS_TEAM_T)
 		{
 			continue;
 		}
@@ -189,10 +273,183 @@ public void Player_Death(Event event, const char[] name, bool dontBroadcast)
 	}
 }
 
+public void Player_Hurt(Event event, const char[] name, bool dontBroadcast)
+{
+	int attacker = GetClientOfUserId(event.GetInt("attacker"));
+
+	if(!(1 <= attacker <= MaxClients))
+	{
+		return;
+	}
+
+	int damage = event.GetInt("dmg_health");
+
+	if(GetEngineVersion() != Engine_CSGO)
+	{
+		PrintCenterText(attacker, "-%d HP", damage);
+
+		return;
+	}
+
+	int entity = CreateEntityByName("point_worldtext"); 
+
+	if(entity == -1)
+	{
+		return;
+	}
+
+	SetEntPropEnt(entity, Prop_Send, "m_hOwnerEntity", attacker);
+	SDKHook(entity, SDKHook_SetTransmit, OnSetTransmit);
+
+	char sDamage[8];
+	IntToString(damage, sDamage, 8);
+	DispatchKeyValue(entity, "message", sDamage);
+
+	bool bKill = event.GetInt("health") <= 0;
+	DispatchKeyValue(entity, "textsize", (bKill)? "16":"10");
+	DispatchKeyValue(entity, "color", (bKill)? "255 0 0":"255 255 255");
+
+	float pos[3];
+	GetClientEyePosition(GetClientOfUserId(event.GetInt("userid")), pos);
+	pos[0] += GetRandomFloat(-10.0, 10.0);
+	pos[1] += GetRandomFloat(-10.0, 10.0);
+	pos[2] += GetRandomFloat(4.0, 10.0); // above head
+
+	float ang[3];
+	GetClientEyeAngles(attacker, ang);
+	
+	TeleportEntity(entity, pos, ang, NULL_VECTOR);
+
+	CreateTimer(0.8, Timer_KillEntity, EntIndexToEntRef(entity));
+}
+
+public Action Timer_KillEntity(Handle timer, any data)
+{
+	int entity = EntRefToEntIndex(data);
+
+	if(data == INVALID_ENT_REFERENCE || !IsValidEntity(entity))
+	{
+		return Plugin_Stop;
+	}
+
+	AcceptEntityInput(entity, "kill");
+
+	return Plugin_Stop;
+}
+
+public Action OnSetTransmit(int entity, int client)
+{
+	int flags = GetEdictFlags(entity);
+
+	if((flags & FL_EDICT_ALWAYS) > 0)
+	{
+		SetEdictFlags(entity, (flags & ~FL_EDICT_ALWAYS));
+	}
+
+	return (client == GetEntPropEnt(entity, Prop_Send, "m_hOwnerEntity"))? Plugin_Continue:Plugin_Handled;
+} 
+
 public void Round_Start(Event event, const char[] name, bool dontBroadcast)
 {
+	gB_CellsOpened = false;
+	gI_ButtonID = -1;
 	gF_RoundStartTime = GetEngineTime();
 	Javit_PrintToChatAll("\x03Terrorists\x01 are muted for the first \x0515 seconds\x01 of the round.");
+	mp_friendlyfire.BoolValue = false;
+
+	if(mp_teammates_are_enemies != null)
+	{
+		mp_teammates_are_enemies.BoolValue = false;
+	}
+
+	if(StrEqual(gS_MapButtonOrigin, "0 0 0"))
+	{
+		for(int i = 1; i <= MaxClients; i++)
+		{
+			if(!IsClientInGame(i) || !CheckCommandAccess(i, "sm_setbutton", ADMFLAG_CONVARS))
+			{
+				continue;
+			}
+
+			Javit_PrintToChat(i, "Cell button is not set! Use \x05!setbutton\x01 to set one.");
+		}
+	}
+	
+	else
+	{
+		if(gI_ButtonID != -1)
+		{
+			SDKUnhook(gI_ButtonID, SDKHook_UsePost, OnUsePost);
+		}
+
+		int entity = -1;
+
+		while((entity = FindEntityByClassname(entity, "func_button")) != INVALID_ENT_REFERENCE)
+		{
+			float pos[3];
+			GetEntPropVector(entity, Prop_Send, "m_vecOrigin", pos);
+
+			char origin[32];
+			FormatEx(origin, 32, "%f %f %f", pos[0], pos[1], pos[2]);
+
+			if(StrEqual(origin, gS_MapButtonOrigin))
+			{
+				gI_ButtonID = entity;
+				SDKHook(gI_ButtonID, SDKHook_UsePost, OnUsePost);
+
+				break;
+			}
+		}
+	}
+}
+
+public void OnUsePost(int entity, int activator, int caller, UseType type, float value)
+{
+	if(gB_CellsOpened)
+	{
+		return;
+	}
+
+	gB_CellsOpened = true;
+
+	if(1 <= activator <= MaxClients)
+	{
+		Javit_PrintToChatAll("\x03%N\x01 has opened the cells.", activator);
+	}
+}
+
+void SQL_DBConnect()
+{
+	delete gH_SQLite;
+
+	KeyValues kv = new KeyValues("javit_jb");
+	kv.SetString("driver", "sqlite");
+	kv.SetString("database", "javit_jb");
+
+	char sError[255];
+	gH_SQLite = SQL_ConnectCustom(kv, sError, 255, true);
+	delete kv;
+
+	if(gH_SQLite == null)
+	{
+		SetFailState("Cannot connect to database. Error: %s", sError);
+	}
+
+	SQL_FastQuery(gH_SQLite, "CREATE TABLE IF NOT EXISTS `maps` (`map` VARCHAR(64) NOT NULL, `origin` VARCHAR(64) NOT NULL, PRIMARY KEY(`map`));");
+}
+
+bool OpenCells(int client = -1, bool force = false)
+{
+	if(gI_ButtonID == -1 || (!force && gB_CellsOpened))
+	{
+		return false;
+	}
+
+	AcceptEntityInput(gI_ButtonID, "Press", client, client);
+
+	gB_CellsOpened = true;
+
+	return true;
 }
 
 public Action Command_MuteT(int client, int args)
@@ -237,13 +494,350 @@ public Action Command_UnmuteAll(int client, int args)
 	return Plugin_Handled;
 }
 
+public Action Command_SetButton(int client, int args)
+{
+	if(client == 0)
+	{
+		ReplyToCommand(client, "This command may be only used in-game.");
+
+		return Plugin_Handled;
+	}
+
+	gI_ClientButton[client] = -1;
+	gS_ButtonOrigin[client] = "0 0 0";
+
+	return ShowSetButtonMenu(client);
+}
+
+Action ShowSetButtonMenu(int client)
+{
+	Menu menu = new Menu(MenuHandler_SetButton);
+	menu.SetTitle("Cell button setter:");
+	menu.AddItem("set", "Set button");
+	menu.AddItem("apply", "Apply", (StrEqual(gS_ButtonOrigin[client], "0 0 0"))? ITEMDRAW_DISABLED:ITEMDRAW_DEFAULT);
+	menu.AddItem("reset", "Reset");
+
+	menu.ExitButton = true;
+	menu.Display(client, 60);
+
+	return Plugin_Handled;
+}
+
+public int MenuHandler_SetButton(Menu menu, MenuAction action, int param1, int param2)
+{
+	if(action == MenuAction_Select)
+	{
+		char sInfo[16];
+		menu.GetItem(param2, sInfo, 16);
+
+		if(StrEqual(sInfo, "set"))
+		{
+			if(!IsPlayerAlive(param1))
+			{
+				Javit_PrintToChat(param1, "You have to be alive in order to select a button.");
+				ShowSetButtonMenu(param1);
+
+				return 0;
+			}
+
+			if(gI_ClientButton[param1] != -1)
+			{
+				SetEntityRenderFx(gI_ClientButton[param1], RENDERFX_NONE);
+			}
+
+			float pos[3];
+			GetClientEyePosition(param1, pos);
+
+			float angles[3];
+			GetClientEyeAngles(param1, angles);
+
+			TR_TraceRayFilter(pos, angles, MASK_SHOT, RayType_Infinite, TraceFilter_NoClients, param1);
+
+			char classname[32];
+			int entity = -1;
+
+			if(TR_DidHit())
+			{
+				entity = TR_GetEntityIndex();
+
+				if(entity != -1)
+				{
+					GetEntityClassname(entity, classname, 32);
+				}
+			}
+
+			if(!StrEqual(classname, "func_button"))
+			{
+				Javit_PrintToChat(param1, "You have to aim on a button.");
+				ShowSetButtonMenu(param1);
+
+				return 0;
+			}
+
+			GetEntPropVector(entity, Prop_Send, "m_vecOrigin", pos);
+			FormatEx(gS_ButtonOrigin[param1], 32, "%f %f %f", pos[0], pos[1], pos[2]);
+			gI_ClientButton[param1] = entity;
+
+			SetEntityRenderFx(entity, RENDERFX_STROBE_FASTER);
+
+			ShowSetButtonMenu(param1);
+		}
+
+		else if(StrEqual(sInfo, "apply"))
+		{
+			if(StrEqual(gS_ButtonOrigin[param1], "0 0 0"))
+			{
+				Javit_PrintToChat(param1, "You have to select a button first.");
+				ShowSetButtonMenu(param1);
+
+				return 0;
+			}
+
+			gI_ButtonID = gI_ClientButton[param1];
+			gS_MapButtonOrigin = gS_ButtonOrigin[param1];
+
+			SetEntityRenderFx(gI_ButtonID, RENDERFX_NONE);
+
+			char sQuery[256];
+			FormatEx(sQuery, 256, "REPLACE INTO maps (map, origin) VALUES ('%s', '%s');", gS_Map, gS_ButtonOrigin[param1]);
+			gH_SQLite.Query(SQL_UpdateQuery_Callback, sQuery);
+
+			Javit_PrintToChat(param1, "Applied cell button on \"%s\".", gS_Map);
+			LogAction(-1, -1, "%L - Applied cell button on %s", param1, gS_Map);
+		}
+
+		else if(StrEqual(sInfo, "reset"))
+		{
+			gI_ButtonID = -1;
+			gS_MapButtonOrigin = "0 0 0";
+
+			char sQuery[256];
+			FormatEx(sQuery, 256, "DELETE FROM maps WHERE map = '%s';", gS_Map);
+			gH_SQLite.Query(SQL_UpdateQuery_Callback, sQuery);
+
+			Javit_PrintToChat(param1, "Removed button from \"%s\".", gS_Map);
+			LogAction(-1, -1, "%L - Removed cell button from %s", param1, gS_Map);
+		}
+	}
+
+	else if(action == MenuAction_End)
+	{
+		delete menu;
+	}
+
+	return 0;
+}
+
+public void SQL_UpdateQuery_Callback(Database db, DBResultSet results, const char[] error, any data)
+{
+	if(results == null)
+	{
+		LogError("SQL error (set button)! Reason: %s", error);
+
+		return;
+	}
+}
+
+public bool TraceFilter_NoClients(int entity, int contentsMask, any data)
+{
+	return entity != data;
+}
+
+public Action Command_Open(int client, int args)
+{
+	bool bAllowed = client == 0 || CheckCommandAccess(client, "javit_open", ADMFLAG_GENERIC) || (GetClientTeam(client) == CS_TEAM_CT && IsPlayerAlive(client));
+
+	if(!bAllowed)
+	{
+		Javit_PrintToChat(client, "Your access level is not high enough for this command. Requirements: Alive CT or admin access.");
+
+		return Plugin_Handled;
+	}
+
+	if(gI_ButtonID == -1)
+	{
+		Javit_PrintToChat(client, "A button is not set for this map.");
+
+		return Plugin_Handled;
+	}
+
+	if(OpenCells(client))
+	{
+		Javit_PrintToChatAll("\x03%N\x01 has opened the cells.", client);
+	}
+
+	else
+	{
+		Javit_PrintToChat(client, "Cells could not be opened. Were they opened before?");
+	}
+
+	return Plugin_Handled;
+}
+
+public Action Command_Medic(int client, int args)
+{
+	if(!IsPlayerAlive(client) || GetClientTeam(client) != CS_TEAM_T || !(1 <= GetClientHealth(client) <= 99))
+	{
+		Javit_PrintToChat(client, "You may only use this command as an alive prisoner with less than 100 HP.");
+
+		return Plugin_Handled;
+	}
+
+	if(gB_Medicated[client])
+	{
+		Javit_PrintToChat(client, "You may only use this command once per round.");
+
+		return Plugin_Handled;
+	}
+
+	int health = GetClientHealth(client);
+
+	for(int i = 1; i <= MaxClients; i++)
+	{
+		if(IsClientInGame(i) && (CheckCommandAccess(i, "javit_medic", ADMFLAG_SLAY) || (GetClientTeam(i) == CS_TEAM_CT && IsPlayerAlive(i))))
+		{
+			Javit_PrintToChat(i, "Player \x03%N\x01 has requested \x05medication\x01. HP: \x05%d", client, health);
+			PlayBeepSound(i);
+		}
+	}
+
+	gB_Medicated[client] = true;
+
+	return Plugin_Handled;
+}
+
+bool CanBox(int client)
+{
+	bool bAllowed = client != 0 && (CheckCommandAccess(client, "javit_box", ADMFLAG_GENERIC) || (GetClientTeam(client) == CS_TEAM_CT && IsPlayerAlive(client)));
+
+	if(!bAllowed)
+	{
+		Javit_PrintToChat(client, "Your access level is not high enough for this command. Requirements: Alive CT or admin access.");
+
+		return false;
+	}
+
+	return true;
+}
+
+public Action Command_Box(int client, int args)
+{
+	return ShowBoxMenu(client);
+}
+
+Action ShowBoxMenu(int client)
+{
+	if(!CanBox(client))
+	{
+		return Plugin_Handled;
+	}
+
+	Menu menu = new Menu(MenuHandler_Box);
+	menu.SetTitle("Friendly boxing:");
+	menu.AddItem("enable", "Enable", (mp_friendlyfire.BoolValue)? ITEMDRAW_DISABLED:ITEMDRAW_DEFAULT);
+	menu.AddItem("disable", "Disable", (mp_friendlyfire.BoolValue)? ITEMDRAW_DEFAULT:ITEMDRAW_DISABLED);
+
+	menu.ExitButton = true;
+	menu.Display(client, 60);
+
+	return Plugin_Handled;
+}
+
+public int MenuHandler_Box(Menu menu, MenuAction action, int param1, int param2)
+{
+	if(action == MenuAction_Select)
+	{
+		if(!CanBox(param1))
+		{
+			return 0;
+		}
+
+		char sInfo[16];
+		menu.GetItem(param2, sInfo, 16);
+
+		if(StrEqual(sInfo, "enable"))
+		{
+			// TODO: 5 sec warning in global hud - center of screen
+			// TODO: don't allow *starting* box when the warning is shown to players
+
+			if(mp_friendlyfire.BoolValue)
+			{
+				Javit_PrintToChat(param1, "Boxing is already enabled.");
+
+				return 0;
+			}
+
+			SetBox(true);
+			Javit_PrintToChatAll("\x03%N\x01 has \x05enabled\x01 prisoner boxing!", param1);
+		}
+
+		else if(StrEqual(sInfo, "disable"))
+		{
+			if(!mp_friendlyfire.BoolValue)
+			{
+				Javit_PrintToChat(param1, "Boxing is already disabled.");
+
+				return 0;
+			}
+
+			SetBox(false);
+			Javit_PrintToChatAll("\x03%N\x01 has \x05disabled\x01 prisoner boxing!", param1);
+		}
+
+		ShowBoxMenu(param1);
+	}
+
+	else if(action == MenuAction_End)
+	{
+		delete menu;
+	}
+
+	return 0;
+}
+
+void SetBox(bool status)
+{
+	mp_friendlyfire.BoolValue = status;
+
+	if(mp_teammates_are_enemies != null)
+	{
+		mp_teammates_are_enemies.BoolValue = status;
+	}
+
+	if(status)
+	{
+		for(int i = 1; i <= MaxClients; i++)
+		{
+			if(IsClientInGame(i))
+			{
+				PlayBeepSound(i);
+			}
+		}
+	}
+}
+
+void PlayBeepSound(int client)
+{
+	EngineVersion version = GetEngineVersion();
+
+	if(version == Engine_CSS)
+	{
+		EmitSoundToClient(client, gS_BeepSound);
+	}
+
+	else
+	{
+		ClientCommand(client, "play */%s", gS_BeepSound);
+	}
+}
+
 public Action Command_VIP(int client, int args)
 {
 	bool bCanVIP = client == 0 || CheckCommandAccess(client, "javit_vip", ADMFLAG_SLAY) || (GetClientTeam(client) == CS_TEAM_CT && IsPlayerAlive(client));
 
 	if(!bCanVIP)
 	{
-		Javit_PrintToChat(client, "Your access level is not high enough for this command. Requirements: CT or admin access.");
+		Javit_PrintToChat(client, "Your access level is not high enough for this command. Requirements: Alive CT or admin access.");
 
 		return Plugin_Handled;
 	}
@@ -255,7 +849,7 @@ public Action Command_VIP(int client, int args)
 		return Plugin_Handled;
 	}
 
-	char[] sArgs = new char[MAX_TARGET_LENGTH];
+	char sArgs[MAX_TARGET_LENGTH];
 	GetCmdArgString(sArgs, MAX_TARGET_LENGTH);
 
 	int iTarget = FindTarget(client, sArgs, false, false);
@@ -265,9 +859,9 @@ public Action Command_VIP(int client, int args)
 		return Plugin_Handled;
 	}
 
-	if(GetTeamPlayerCount(CS_TEAM_T, true) <= 0) // TODO: 2
+	if(GetTeamPlayerCount(CS_TEAM_T, true) <= 2)
 	{
-		ReplyToCommand(client, "You are not allowed to grant VIP access when only 2 or less Terrorists are alive. %d");
+		ReplyToCommand(client, "You are not allowed to grant VIP access when only 2 or less Terrorists are alive.");
 
 		return Plugin_Handled;
 	}
@@ -308,11 +902,16 @@ int GetTeamPlayerCount(int team = -1, bool alive = false)
 
 public Action Command_VoteCT(int client, int args)
 {
-	if(IsVoteInProgress() || gI_VoteCT != VoteCT_None)
+	if(IsVoteInProgress())
 	{
 		ReplyToCommand(client, "A vote is already ongoing.");
 
 		return Plugin_Handled;
+	}
+
+	if(gI_VoteCT != VoteCT_None)
+	{
+		StopVoteCT("Aborted current vote to start a new one.");
 	}
 
 	ShowActivity(client, "Started a manual CT vote.");
@@ -335,7 +934,11 @@ public Action Command_VoteCT(int client, int args)
 	}
 
 	StartVoteCT();
-	// TODO: open cells here
+	
+	if(OpenCells(client, true))
+	{
+		Javit_PrintToChatAll("Cells have been opened.");
+	}
 
 	return Plugin_Handled;
 }
@@ -344,7 +947,7 @@ void StopVoteCT(const char[] message, any ...)
 {
 	if(strlen(message) > 0) // not an empty parameter - print a message
 	{
-		char[] sFormatted = new char[256];
+		char sFormatted[256];
 		VFormat(sFormatted, 256, message, 2);
 
 		Javit_PrintToChatAll("%s", sFormatted);
@@ -379,25 +982,25 @@ public int VoteCT_Handler(Menu menu, MenuAction action, int param1, int param2)
 	{
 		gF_VoteEnd = GetEngineTime();
 
-		char[] info = new char[32];
-		menu.GetItem(param1, info, 32);
+		char sInfo[32];
+		menu.GetItem(param1, sInfo, 32);
 
-		if(StrEqual(info, "fast"))
+		if(StrEqual(sInfo, "fast"))
 		{
 			gI_VoteCT = VoteCT_FastWrite;
 			IntToString(GetRandomInt(10000000, 99999999), gS_VoteCTAnswer, 64);
 			FormatEx(gS_VoteCTHUD, 128, "Be the first to type %s!", gS_VoteCTAnswer);
 		}
 
-		else if(StrEqual(info, "random"))
+		else if(StrEqual(sInfo, "random"))
 		{
 			gA_RandomNumber.Clear();
 			gI_VoteCT = VoteCT_RandomNumber;
 			IntToString(GetRandomInt(1, 350), gS_VoteCTAnswer, 64);
-			strcopy(gS_VoteCTHUD, 128, "Submit a number from 1 to 350.");
+			gS_VoteCTHUD = "Submit a number from 1 to 350.";
 		}
 
-		else if(StrEqual(info, "math"))
+		else if(StrEqual(sInfo, "math"))
 		{
 			gI_VoteCT = VoteCT_Math;
 
@@ -410,7 +1013,7 @@ public int VoteCT_Handler(Menu menu, MenuAction action, int param1, int param2)
 
 		else
 		{
-			if(StrEqual(info, "extend"))
+			if(StrEqual(sInfo, "extend"))
 			{
 				Javit_PrintToChatAll("Voting is over. CT rounds have been extended to 12.");
 			}
@@ -421,7 +1024,7 @@ public int VoteCT_Handler(Menu menu, MenuAction action, int param1, int param2)
 
 	else if(action == MenuAction_VoteCancel)
 	{
-		StopVoteCT("");
+		StopVoteCT("Cycling vote aborted.");
 	}
 
 	else if(action == MenuAction_End)
@@ -601,6 +1204,8 @@ void WinVoteCT(int client)
 
 	CS_SwitchTeam(client, CS_TEAM_CT);
 	CS_RespawnPlayer(client);
+
+	GetClientAuthId(client, AuthId_Steam3, gS_LastWinnerID, 32);
 }
 
 public Action OnClientSayCommand(int client, const char[] command, const char[] sArgs)
@@ -612,7 +1217,23 @@ public Action OnClientSayCommand(int client, const char[] command, const char[] 
 
 	if(IsFreeKiller(client))
 	{
-		ReplyToCommand(client, "You cannot write during votes as you're CT banned.");
+		Javit_PrintToChat(client, "You cannot write during votes as you're CT banned.");
+
+		return Plugin_Handled;
+	}
+
+	char sAuthID[32];
+
+	if(!GetClientAuthId(client, AuthId_Steam3, sAuthID, 32))
+	{
+		Javit_PrintToChat(client, "Could not authenticate your SteamID. Reconnect and try again.");
+
+		return Plugin_Handled;
+	}
+
+	if(StrEqual(sAuthID, gS_LastWinnerID))
+	{
+		Javit_PrintToChat(client, "You have won the previous cycle vote, so you cannot participate in this one.");
 
 		return Plugin_Handled;
 	}
@@ -638,7 +1259,7 @@ public Action OnClientSayCommand(int client, const char[] command, const char[] 
 			return Plugin_Handled;
 		}
 
-		int[] arr = new int[2];
+		int arr[2];
 		arr[0] = iSerial;
 		arr[1] = iNumber;
 
@@ -661,7 +1282,7 @@ bool IsFreeKiller(int client)
 {
 	if(AreClientCookiesCached(client))
 	{
-		char[] sBanned = new char[8];
+		char sBanned[8];
 		GetClientCookie(client, gH_BanCookie, sBanned, 8);
 
 		return view_as<bool>(StringToInt(sBanned));
@@ -672,7 +1293,7 @@ bool IsFreeKiller(int client)
 
 public int Native_SetVIP(Handle plugin, int numParams)
 {
-	// TODO: implement
+	gB_VIP[GetNativeCell(1)] = GetNativeCell(2);
 }
 
 void Javit_BeaconEntity(int entity)
@@ -699,7 +1320,7 @@ void Javit_BeaconEntity(int entity)
 
 void Javit_PrintToChat(int client, const char[] buffer, any ...)
 {
-	char[] sFormatted = new char[256];
+	char sFormatted[256];
 	VFormat(sFormatted, 256, buffer, 3);
 
 	if(client != 0)
@@ -715,7 +1336,7 @@ void Javit_PrintToChat(int client, const char[] buffer, any ...)
 
 void Javit_PrintToChatAll(const char[] format, any ...)
 {
-	char[] buffer = new char[255];
+	char buffer[255];
 
 	for(int i = 1; i <= MaxClients; i++)
 	{
