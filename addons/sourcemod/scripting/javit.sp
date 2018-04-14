@@ -148,6 +148,8 @@ public void OnPluginStart()
 		gCV_IgnoreGrenadeRadio.BoolValue = false;
 	}
 
+	SQL_DBConnect();
+
 	if(gB_Late)
 	{
 		for(int i = 1; i <= MaxClients; i++)
@@ -158,8 +160,6 @@ public void OnPluginStart()
 			}
 		}
 	}
-
-	SQL_DBConnect();
 
 	gH_Forwards_OnLRAvailable = CreateGlobalForward("Javit_OnLRAvailable", ET_Event);
 	gH_Forwards_OnLRStart = CreateGlobalForward("Javit_OnLRStart", ET_Event, Param_Cell, Param_Cell, Param_Cell);
@@ -1450,7 +1450,7 @@ public Action Command_Top(int client, int args)
 		return Plugin_Handled;
 	}
 
-	gH_SQL.Query(SQL_Top_Callback, "SELECT name, wins, auth FROM players WHERE wins != 0 ORDER BY wins DESC LIMIT 25;", GetClientSerial(client));
+	gH_SQL.Query(SQL_Top_Callback, "SELECT name, wins, auth FROM players WHERE wins > 0 ORDER BY wins DESC LIMIT 25;", GetClientSerial(client));
 
 	gB_PendingTop[client] = true;
 
@@ -1475,11 +1475,17 @@ public void SQL_Top_Callback(Database db, DBResultSet results, const char[] erro
 		return;
 	}
 
-	char[] sTitle = new char[128];
-	FormatEx(sTitle, 128, "Top 25 Last Request masters:\nYour rank: #%d (%d wins)", gI_LRRank[client], gI_LRWins[client]);
-
 	Menu menu = new Menu(MenuHandler_ShowSteamID3);
-	menu.SetTitle("Top 25 Last Request masters");
+
+	if(gI_LRWins[client] > 0)
+	{
+		menu.SetTitle("Top 25 Last Request masters:\nYour rank: #%d (%d wins)", gI_LRRank[client], gI_LRWins[client]);
+	}
+	
+	else
+	{
+		menu.SetTitle("Top 25 Last Request masters:");
+	}
 
 	int iCount = 0;
 
@@ -1577,7 +1583,7 @@ public void SQL_UpdateRank_Callback(Database db, DBResultSet results, const char
 		return;
 	}
 
-	if(results.FetchRow() && results.FetchFloat(0) > 0.0)
+	if(results.FetchRow() && results.FetchInt(0) > 0)
 	{
 		gI_LRRank[client] = results.FetchInt(0);
 		gI_LRWins[client] = results.FetchInt(1);
