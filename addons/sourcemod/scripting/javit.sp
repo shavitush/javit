@@ -2,7 +2,6 @@
 #include <sdktools>
 #include <sdkhooks>
 #include <cstrike>
-#include <emitsoundany>
 #include <smlib/clients>
 #include <smlib/weapons>
 
@@ -617,22 +616,22 @@ public void OnMapStart()
 	PrecacheModel(gSLR_MonitorModel);
 
 	AddFileToDownloadsTable("sound/javit/lr_beep_v1.mp3");
-	PrecacheSoundAny("javit/lr_beep_v1.mp3", true);
+	PrecacheSound("javit/lr_beep_v1.mp3", true);
 
 	AddFileToDownloadsTable("sound/javit/lr_activated.mp3");
-	PrecacheSoundAny("javit/lr_activated.mp3", true);
+	PrecacheSound("javit/lr_activated.mp3", true);
 
 	AddFileToDownloadsTable("sound/javit/lr_start.mp3");
-	PrecacheSoundAny("javit/lr_start.mp3", true);
+	PrecacheSound("javit/lr_start.mp3", true);
 
 	AddFileToDownloadsTable("sound/javit/lr_error.mp3");
-	PrecacheSoundAny("javit/lr_error.mp3", true);
+	PrecacheSound("javit/lr_error.mp3", true);
 
 	AddFileToDownloadsTable("sound/javit/lr_wow.mp3");
-	PrecacheSoundAny("javit/lr_wow.mp3", true);
+	PrecacheSound("javit/lr_wow.mp3", true);
 
 	AddFileToDownloadsTable("sound/javit/lr_hax.mp3");
-	PrecacheSoundAny("javit/lr_hax.mp3", true);
+	PrecacheSound("javit/lr_hax.mp3", true);
 
 	CreateTimer(0.50, Timer_Beacon, INVALID_HANDLE, TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
 
@@ -1599,7 +1598,7 @@ public Action Timer_Beacon(Handle Timer)
 		return Plugin_Continue;
 	}
 
-	EmitSoundToAllAny("javit/lr_beep_v1.mp3", SOUND_FROM_PLAYER, SNDCHAN_STATIC, 20);
+	EmitSoundToAll("javit/lr_beep_v1.mp3", SOUND_FROM_PLAYER, SNDCHAN_STATIC, 20);
 
 	if(gLR_Current != LR_CircleOfDoom)
 	{
@@ -1890,7 +1889,7 @@ void Javit_AnnounceLR()
 		Javit_PrintToChatAll("\x03%N\x01 can have a \x05last request\x01!", iLRPlayer);
 	}
 
-	EmitSoundToAllAny("javit/lr_activated.mp3", SOUND_FROM_PLAYER, SNDCHAN_STATIC, SNDLEVEL_NORMAL);
+	EmitSoundToAll("javit/lr_activated.mp3", SOUND_FROM_PLAYER, SNDCHAN_STATIC, SNDLEVEL_NORMAL);
 
 	Call_StartForward(gH_Forwards_OnLRAvailable);
 	Call_Finish();
@@ -1924,7 +1923,7 @@ bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool random)
 		gCV_IgnoreGrenadeRadio.BoolValue = true;
 	}
 
-	EmitSoundToAllAny("javit/lr_start.mp3", SOUND_FROM_PLAYER, SNDCHAN_STATIC, SNDLEVEL_NORMAL);
+	EmitSoundToAll("javit/lr_start.mp3", SOUND_FROM_PLAYER, SNDCHAN_STATIC, SNDLEVEL_NORMAL);
 
 	gLR_Current = type;
 
@@ -2283,7 +2282,7 @@ bool Javit_InitializeLR(int prisoner, int guard, LRTypes type, bool random)
 
 		case LR_DRHax:
 		{
-			EmitSoundToAllAny("javit/lr_hax.mp3", SOUND_FROM_PLAYER, SNDCHAN_STATIC, 40);
+			EmitSoundToAll("javit/lr_hax.mp3", SOUND_FROM_PLAYER, SNDCHAN_STATIC, 40);
 
 			Javit_PrintToChatAll("HAXXXXXXXXXXXXX");
 
@@ -2666,12 +2665,12 @@ Action Javit_ShowLRMenu(int client)
 
 void Javit_PlayMissSound()
 {
-	EmitSoundToAllAny("javit/lr_error.mp3", SOUND_FROM_PLAYER, SNDCHAN_STATIC, SNDLEVEL_NORMAL);
+	EmitSoundToAll("javit/lr_error.mp3", SOUND_FROM_PLAYER, SNDCHAN_STATIC, SNDLEVEL_NORMAL);
 }
 
 void Javit_PlayWowSound()
 {
-	EmitSoundToAllAny("javit/lr_wow.mp3", SOUND_FROM_PLAYER, SNDCHAN_STATIC, SNDLEVEL_NORMAL);
+	EmitSoundToAll("javit/lr_wow.mp3", SOUND_FROM_PLAYER, SNDCHAN_STATIC, SNDLEVEL_NORMAL);
 }
 
 public Action OnPlayerRunCmd(int client, int &buttons)
@@ -2971,7 +2970,7 @@ void ShootMonitor(int client)
 	SDKHook(iEntity, SDKHook_StartTouch, Monitor_StartTouch);
 	SDKHook(iEntity, SDKHook_OnTakeDamage, Monitor_OnTakeDamage);
 
-	EmitSoundToAllAny("javit/lr_hax.mp3", SOUND_FROM_PLAYER, SNDCHAN_STATIC, SNDLEVEL_NORMAL);
+	EmitSoundToAll("javit/lr_hax.mp3", SOUND_FROM_PLAYER, SNDCHAN_STATIC, SNDLEVEL_NORMAL);
 }
 
 int GetLRPartner(int client)

@@ -3,7 +3,6 @@
 #include <sdkhooks>
 #include <clientprefs>
 #include <cstrike>
-#include <emitsoundany>
 
 #undef REQUIRE_PLUGIN
 #include <javit>
@@ -157,7 +156,7 @@ public void OnMapStart()
 	gH_SQLite.Query(SQL_GetButtonOrigin_Callback, sQuery);
 
 	gF_RoundStartTime = -15.0;
-	PrecacheSoundAny("ui/achievement_earned.wav", true);
+	PrecacheSound("ui/achievement_earned.wav", true);
 	StopVoteCT("");
 
 	if(GetEngineVersion() == Engine_CSS)
@@ -1190,7 +1189,7 @@ void DrawRandomNumberWinner()
 
 void WinVoteCT(int client)
 {
-	EmitSoundToAllAny("ui/achievement_earned.wav");
+	EmitSoundToAll("ui/achievement_earned.wav");
 	StopVoteCT("");
 
 	Javit_PrintToChatAll("\x03%N\x01 is the new CT leader.", client);
