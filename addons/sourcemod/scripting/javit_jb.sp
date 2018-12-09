@@ -125,7 +125,11 @@ public void OnPluginStart()
 	RegConsoleCmd("sm_vip", Command_VIP, "Assign VIP status. Usage: sm_vip <target>");
 	RegConsoleCmd("sm_open", Command_Open, "Assign VIP status. Usage: sm_vip <target>");
 	RegConsoleCmd("sm_medic", Command_Medic, "Request assistance from the paramedics.");
-	RegConsoleCmd("sm_box", Command_Box, "It's boxing time!");
+
+	if(version == Engine_CSGO) // CS:S needs a very hacky method for this
+	{
+		RegConsoleCmd("sm_box", Command_Box, "It's boxing time!");
+	}
 
 	SQL_DBConnect();
 

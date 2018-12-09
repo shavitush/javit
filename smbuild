@@ -1,7 +1,7 @@
 Plugin(source='addons/sourcemod/scripting/javit.sp')
 Plugin(source='addons/sourcemod/scripting/javit_jb.sp')
 
-Package(name='bhoptimer',
+Package(name='javit',
         plugins=['javit', 'javit_jb'],
         filegroups={
             '.': ['README.md', 'LICENSE'],

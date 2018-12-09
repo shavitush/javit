@@ -894,6 +894,8 @@ public void Weapon_Fire(Event e, const char[] name, bool dB)
 					TE_SetupBeamPoints(fEyeOrigin, fEnd, gI_BeamSprite, gI_HaloSprite, 0, 0, 0.75, 5.0, 5.0, 0, 0.0, color, 0);
 					TE_SendToAll(0.0);
 				}
+
+				delete trace;
 			}
 		}
 
@@ -1279,12 +1281,7 @@ public int MenuHandler_LastRequestCT(Menu m, MenuAction a, int p1, int p2)
 			case LR_Shot4Shot, LR_NoScopeBattle:
 			{
 				Menu menu = new Menu(MenuHandler_Weapons);
-
-				char[] sTitle = new char[64];
-				FormatEx(sTitle, 64, "[%s] Choose a weapon:", gS_LRNames[gLR_ChosenRequest[p1]]);
-
-				menu.SetTitle(sTitle);
-
+				menu.SetTitle("[%s] Choose a weapon:", gS_LRNames[gLR_ChosenRequest[p1]]);
 				menu.AddItem("-2", "Random");
 
 				if(gLR_ChosenRequest[p1] == LR_Shot4Shot)
@@ -1513,7 +1510,6 @@ public void SQL_Top_Callback(Database db, DBResultSet results, const char[] erro
 	}
 
 	menu.ExitButton = true;
-
 	menu.Display(client, 20);
 }
 
@@ -2579,6 +2575,8 @@ void Javit_DisplayCTList(int client)
 	if(menu.ItemCount == 0)
 	{
 		Javit_PrintToChat(client, "There are no available guards to fulfill your last request.");
+	
+		delete menu;
 
 		return;
 	}
