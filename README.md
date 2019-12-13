@@ -1,81 +1,16 @@
 # Javit
 ### shavit's jailbreak
 
-Credits
-___
+This was never supposed to be public, but it's not used anywhere nowadays and I've retired from Source server development. I figured it could be helpful if this was made public and perhaps forked.
 
-* evadog for flamethrower.
-* entcontrol for missiles (dr hax).
+This contains 2 plugins which should set up an Israeli styled Jailbreak server for Source games.
 
-Team managements
---
-- [ ] VoteCT (+API)
-- [ ] Rewrite JBAddons and make VoteCTs dynamic.
-- [ ] Rewrite CT bans.
+- Javit - code related to Last Requests and other stuff (SM_Hosties alternative)
+- Javit_JB - plugin that manages the Israeli Jailbreak features. This one is a rewrite of [Jailbreak Addons v2](https://gist.github.com/shavitush/c7829a2d32b955ee869180fd38ff391d) and is intended to be less "spaghetti".
 
+Some stuff to note:
 
-Basic LRs
---
-- [x] Colored beacons.
-- [x] Beacon sounds.
-- [x] LR menu.
-- [x] Initialize LR.
-- [x] Abort LR.
+- Javit will throw errors from the Deagle Toss timer every once in a while. I never bothered to solve it and it never affected gameplay nor was it leaking memory.
+- Javit_Jb is not finished. `OnPluginStart()` has a small list of to-do that I intended to do, but also here I simply lost interest and stopped developing it.
 
-
-Advanced LRs
---
-- [x] Save pre-LR weapons and give them to the winner.
-- [x] Abort on disconnect.
-- [x] Advanced guntoss modes.
-
-
-Sounds
---
-- [x] On LR activated (lr_activated.mp3).
-- [x] On LR aborted (lr_error.mp3).
-- [x] On LR started (lr_start.mp3).
-- [x] On custom LRs (lr_wow.mp3/lr_hax.mp3).
-
-
-Games
---
-- [x] Dodgeball
-- [x] Shot4Shot
-- [x] Random - 500-2500hp, random weapon depending on game, 0.5x-1.5x speed, 0.75x-1.25x gravity.
-- [x] NoScope Battle (random weapon, depending on game)
-    - [ ] Shot4Shot mode for noscope battle
-- [x] Grenade Fight
-- [x] Backstabs
-- [x] Pro90
-- [x] Headshots
-- [x] Jumpshots (scout/ssg and usp/usp-s)
-- [x] Russian Roulette
-- [x] Knife Fight
-- [x] Mag4Mag
-- [x] Flamethrower
-- [x] Hax Fight
-- [x] Deagle Toss
-- [x] Shotgun Wars
-- [x] Rebel
-- [x] Molotov Fight (CS:GO only)
-- [x] Freeday/VIP (needs JBaddons2 API)
-- [x] Circle of Doom
-- [ ] [Dash Fight](https://gist.github.com/7b64ebe83843e710d2542b456650d76b)
-
-
-Rankings
---
-- [x] Count LR wins - need more than 10 active players or an admin.
-- [x] `sm_top`/`sm_lrtop` commands.
-
-
-API
---
-- [x] LRTypes Javit_GetClientLR(int client)
-- [x] void Javit_GetLRName(LRTypes lr, char[] buffer, int maxlen)
-- [x] int Javit_GetClientPartner(int client) // get lr partner
-- [x] void Javit_OnLRAvailable()
-- [x] bool Javit_OnLRStart(LRTypes type, int prisoner, int guard) - return false to not allow the lr to start
-- [x] void Javit_OnLRFinish(LRTypes type, int winner, int loser)
-- [ ] custom LRs API
+This was developed for [YOURGAME.co.il](https://yourgame.co.il/) but it is deprecated.
